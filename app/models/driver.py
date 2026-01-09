@@ -63,8 +63,10 @@ class DriverUpdate(BaseModel):
 
 
 class StatusUpdate(BaseModel):
-    """Model for updating driver status only"""
+    """Model for updating driver status with optional location"""
     status: str = Field(..., description="New status")
+    latitude: Optional[float] = Field(None, description="Current latitude")
+    longitude: Optional[float] = Field(None, description="Current longitude")
 
     @validator("status")
     def validate_status(cls, v):

@@ -11,11 +11,15 @@ from app.database import get_db_admin
 from app.models.location import (
     LocationUpdate,
     LocationResponse,
+    MyLocationResponse,
     CheckInRequest,
     CheckInResponse,
     StatusChangeRequest,
-    StatusChangeResponse
+    StatusChangeResponse,
+    AppOpenRequest,
+    AppOpenResponse
 )
+from app.services.follow_up_engine import determine_follow_up
 from app.dependencies import get_current_driver
 from app.utils.location import fuzz_location, calculate_distance
 from app.config import settings
@@ -25,6 +29,29 @@ import geohash as gh
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/locations", tags=["Locations"])
+
+
+def parse_timestamp(timestamp_str: str) -> datetime:
+    """
+    Safely parse timestamp from Supabase, handling various formats.
+    Supabase may return timestamps with varying microsecond precision.
+    """
+    try:
+        # Remove 'Z' and replace with +00:00
+        timestamp_str = timestamp_str.replace("Z", "+00:00")
+
+        # Try parsing directly first
+        try:
+            return datetime.fromisoformat(timestamp_str)
+        except ValueError:
+            # If it fails, it might be due to microsecond precision
+            # Parse manually and truncate microseconds if needed
+            from dateutil import parser
+            return parser.isoparse(timestamp_str)
+    except Exception as e:
+        logger.error(f"Failed to parse timestamp '{timestamp_str}': {e}")
+        # Fallback to current time
+        return datetime.utcnow()
 
 
 @router.post("/check-in", response_model=CheckInResponse)
@@ -124,6 +151,199 @@ async def check_in(
         )
 
 
+@router.post("/app-open", response_model=AppOpenResponse)
+async def on_app_open(
+    request: AppOpenRequest,
+    driver: dict = Depends(get_current_driver),
+    db: Client = Depends(get_db_admin)
+):
+    """
+    Called when user opens app or tab regains focus.
+    Detects if movement or staleness requires status prompt.
+
+    This implements the web-first "check on app open" logic:
+    - If 12+ hours since last update → prompt "Welcome back!"
+    - If location changed significantly → prompt status update
+    - Otherwise → silent location refresh
+    """
+    try:
+        current_status = driver["status"]
+
+        # Get last location
+        last_location_response = db.from_("driver_locations") \
+            .select("*") \
+            .eq("driver_id", driver["id"]) \
+            .execute()
+
+        last_location = last_location_response.data[0] if last_location_response.data else None
+
+        # Calculate time since last update
+        last_active = parse_timestamp(driver["last_active"])
+        hours_since_update = (datetime.utcnow() - last_active.replace(tzinfo=None)).total_seconds() / 3600
+
+        # Calculate distance moved (if we have previous location)
+        distance_moved = 0.0
+        if last_location:
+            distance_moved = calculate_distance(
+                last_location["latitude"],
+                last_location["longitude"],
+                request.latitude,
+                request.longitude
+            )
+
+        # Get facility name at last location (if exists)
+        last_facility_name = None
+        if last_location:
+            try:
+                facilities = db.from_("facilities").select("*").execute()
+                if facilities.data:
+                    for facility in facilities.data:
+                        dist = calculate_distance(
+                            last_location["latitude"],
+                            last_location["longitude"],
+                            facility["latitude"],
+                            facility["longitude"]
+                        )
+                        if dist <= 0.1:
+                            last_facility_name = facility["name"]
+                            break
+            except Exception as e:
+                # Facilities table doesn't exist yet - that's OK
+                logger.debug(f"Could not query facilities (table may not exist): {e}")
+                pass
+
+        # CASE 1: Driver was stale (12+ hours)
+        if hours_since_update >= 12:
+            logger.info(f"Driver {driver['id']} app open: stale (>{hours_since_update:.1f}h)")
+            return AppOpenResponse(
+                action="prompt_status",
+                reason="welcome_back",
+                message="Welcome back! What's your status?",
+                current_status=current_status,
+                last_status=current_status,
+                last_location_name=last_facility_name,
+                distance_moved=round(distance_moved, 1) if distance_moved else None,
+                hours_since_update=round(hours_since_update, 1),
+                suggested_status=None
+            )
+
+        # CASE 2: Significant movement detected (>0.5 miles)
+        if distance_moved > 0.5:
+            # They were parked/waiting but clearly moved
+            if current_status in ["parked", "waiting"]:
+                logger.info(f"Driver {driver['id']} app open: moved {distance_moved:.1f} miles while {current_status}")
+                return AppOpenResponse(
+                    action="prompt_status",
+                    reason="location_changed",
+                    message="Looks like you've moved. What's your status now?",
+                    current_status=current_status,
+                    last_status=current_status,
+                    last_location_name=last_facility_name,
+                    distance_moved=round(distance_moved, 1),
+                    hours_since_update=round(hours_since_update, 1),
+                    suggested_status="rolling"
+                )
+
+            # They were rolling - just update location silently
+            elif current_status == "rolling":
+                logger.info(f"Driver {driver['id']} app open: moved {distance_moved:.1f} miles while rolling (silent update)")
+                # Update location silently
+                await _update_location_silently(driver["id"], request, db)
+                return AppOpenResponse(
+                    action="none",
+                    reason=None,
+                    message=None,
+                    current_status=current_status,
+                    last_status=current_status,
+                    last_location_name=last_facility_name,
+                    distance_moved=round(distance_moved, 1),
+                    hours_since_update=round(hours_since_update, 1),
+                    suggested_status=None
+                )
+
+        # CASE 3: Same location, not stale - just refresh timestamp
+        logger.info(f"Driver {driver['id']} app open: no change (silent refresh)")
+        await _update_location_silently(driver["id"], request, db)
+        return AppOpenResponse(
+            action="none",
+            reason=None,
+            message=None,
+            current_status=current_status,
+            last_status=current_status,
+            last_location_name=last_facility_name,
+            distance_moved=round(distance_moved, 1) if distance_moved else None,
+            hours_since_update=round(hours_since_update, 1),
+            suggested_status=None
+        )
+
+    except Exception as e:
+        logger.error(f"App open detection failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"App open detection failed: {str(e)}"
+        )
+
+
+async def _update_location_silently(driver_id: str, request: AppOpenRequest, db: Client):
+    """
+    Helper function to silently update driver location and timestamp.
+    Used when no status prompt is needed.
+    """
+    try:
+        # Get driver status for fuzzing
+        driver_response = db.from_("drivers").select("status").eq("id", driver_id).execute()
+        if not driver_response.data:
+            return
+
+        driver_status = driver_response.data[0]["status"]
+
+        # Apply fuzzing
+        fuzz_distance = {
+            "rolling": settings.location_fuzz_rolling_miles,
+            "waiting": settings.location_fuzz_waiting_miles,
+            "parked": settings.location_fuzz_parked_miles
+        }.get(driver_status, 0.5)
+
+        fuzzed_lat, fuzzed_lng = fuzz_location(
+            request.latitude,
+            request.longitude,
+            fuzz_distance
+        )
+
+        # Calculate geohash
+        geohash = gh.encode(fuzzed_lat, fuzzed_lng, precision=settings.geohash_precision_local)
+
+        # Update location
+        location_data = {
+            "driver_id": driver_id,
+            "latitude": request.latitude,
+            "longitude": request.longitude,
+            "fuzzed_latitude": fuzzed_lat,
+            "fuzzed_longitude": fuzzed_lng,
+            "accuracy": request.accuracy,
+            "heading": request.heading,
+            "speed": request.speed,
+            "geohash": geohash,
+            "recorded_at": datetime.utcnow().isoformat()
+        }
+
+        db.from_("driver_locations").upsert(
+            location_data,
+            on_conflict="driver_id"
+        ).execute()
+
+        # Update last_active timestamp
+        db.from_("drivers").update({
+            "last_active": datetime.utcnow().isoformat()
+        }).eq("id", driver_id).execute()
+
+        logger.debug(f"Silently updated location for driver {driver_id}")
+
+    except Exception as e:
+        logger.error(f"Silent location update failed: {e}")
+        # Don't raise - this is a background operation
+
+
 @router.post("/status/update", response_model=StatusChangeResponse)
 async def update_status_with_location(
     request: StatusChangeRequest,
@@ -131,8 +351,13 @@ async def update_status_with_location(
     db: Client = Depends(get_db_admin)
 ):
     """
-    Change status with location update.
+    Change status with location update + intelligent follow-up questions.
+
     Updates status, location, closes old status history, opens new.
+
+    NEW: Returns contextual follow-up questions based on status transitions:
+    - WAITING → ROLLING: Detention time and payment tracking
+    - PARKED → ROLLING: Parking safety and vibe feedback
     """
     try:
         old_status = driver["status"]
@@ -145,6 +370,16 @@ async def update_status_with_location(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
             )
+
+        # Get previous status from status_updates table for follow-up context
+        prev_query = db.from_("status_updates") \
+            .select("*") \
+            .eq("driver_id", driver["id"]) \
+            .order("created_at", desc=True) \
+            .limit(1) \
+            .execute()
+
+        prev = prev_query.data[0] if prev_query.data else None
 
         # Apply location fuzzing based on NEW status
         fuzz_distance = {
@@ -203,6 +438,7 @@ async def update_status_with_location(
             }).execute()
 
         # Find facility
+        facility_id = None
         facility_name = None
         facilities = db.from_("facilities").select("*").execute()
 
@@ -214,9 +450,62 @@ async def update_status_with_location(
                     facility["latitude"],
                     facility["longitude"]
                 )
-                if distance <= 0.1:
+                if distance <= 0.3:  # Within 0.3 miles
+                    facility_id = facility["id"]
                     facility_name = facility["name"]
                     break
+
+        # Calculate follow-up question context
+        context = None
+        question = None
+
+        if old_status != new_status:  # Only for status changes
+            context, question = determine_follow_up(
+                prev_status=prev["status"] if prev else None,
+                prev_latitude=prev["latitude"] if prev else None,
+                prev_longitude=prev["longitude"] if prev else None,
+                prev_updated_at=parse_timestamp(prev["created_at"]) if prev else None,
+                new_status=new_status,
+                new_latitude=request.latitude,
+                new_longitude=request.longitude,
+                facility_name=facility_name
+            )
+
+        # Save status_update record with context
+        status_record = {
+            "driver_id": driver["id"],
+            "status": new_status,
+            "latitude": request.latitude,
+            "longitude": request.longitude,
+            "facility_id": facility_id,
+            # Previous context
+            "prev_status": prev["status"] if prev else None,
+            "prev_latitude": prev["latitude"] if prev else None,
+            "prev_longitude": prev["longitude"] if prev else None,
+            "prev_facility_id": prev["facility_id"] if prev else None,
+            "prev_updated_at": prev["created_at"] if prev else None,
+        }
+
+        # Add calculated context if available
+        if context:
+            status_record.update({
+                "time_since_last_seconds": context.time_since_seconds,
+                "distance_from_last_miles": context.distance_miles,
+            })
+
+        # Add follow-up question if present
+        if question:
+            status_record.update({
+                "follow_up_question_type": question.question_type,
+                "follow_up_question_text": question.text,
+                "follow_up_options": [opt.model_dump() for opt in question.options],
+                "follow_up_skippable": question.skippable,
+                "follow_up_auto_dismiss_seconds": question.auto_dismiss_seconds,
+            })
+
+        # Insert status update record
+        result = db.from_("status_updates").insert(status_record).execute()
+        status_update_id = result.data[0]["id"] if result.data else None
 
         # Get wait context if status is "waiting" and at a facility
         wait_context = None
@@ -244,7 +533,10 @@ async def update_status_with_location(
                     "avg_wait_hours": 2.5  # TODO: Calculate from status_history
                 }
 
-        logger.info(f"Driver {driver['id']} changed status from {old_status} to {new_status}")
+        logger.info(
+            f"Driver {driver['id']} changed status from {old_status} to {new_status}" +
+            (f" with follow-up question: {question.question_type}" if question else "")
+        )
 
         return StatusChangeResponse(
             success=True,
@@ -257,6 +549,8 @@ async def update_status_with_location(
                 updated_at=datetime.utcnow()
             ),
             wait_context=wait_context,
+            follow_up_question=question,
+            status_update_id=status_update_id,
             message=f"Status updated to {new_status.title()}" + (
                 f" at {facility_name}" if facility_name else ""
             )
@@ -265,20 +559,21 @@ async def update_status_with_location(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Status update failed: {e}")
+        logger.error(f"Status update failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Status update failed: {str(e)}"
         )
 
 
-@router.get("/me", response_model=LocationResponse)
+@router.get("/me", response_model=MyLocationResponse)
 async def get_my_location(
     driver: dict = Depends(get_current_driver),
     db: Client = Depends(get_db_admin)
 ):
     """
-    Get my current location (fuzzed).
+    Get my current location (fuzzed) with driver info.
+    Use this to show "YOU" marker on the map.
     """
     try:
         location = db.from_("driver_locations") \
@@ -293,10 +588,31 @@ async def get_my_location(
                 detail="No location data found. Please check in first."
             )
 
-        return LocationResponse(
+        # Try to find nearby facility
+        facility_name = None
+        try:
+            facilities = db.from_("facilities").select("*").execute()
+            if facilities.data:
+                for facility in facilities.data:
+                    distance = calculate_distance(
+                        location.data["fuzzed_latitude"],
+                        location.data["fuzzed_longitude"],
+                        facility["latitude"],
+                        facility["longitude"]
+                    )
+                    if distance <= 0.1:  # Within 0.1 miles
+                        facility_name = facility["name"]
+                        break
+        except Exception as e:
+            logger.debug(f"Could not query facilities: {e}")
+
+        return MyLocationResponse(
+            driver_id=driver["id"],
+            handle=driver["handle"],
+            status=driver["status"],
             latitude=location.data["fuzzed_latitude"],
             longitude=location.data["fuzzed_longitude"],
-            facility_name=None,  # TODO: Look up facility
+            facility_name=facility_name,
             updated_at=location.data["recorded_at"]
         )
 
@@ -350,7 +666,7 @@ async def get_nearby_drivers(
                     continue
 
                 # Check if location is stale (>12 hours)
-                recorded_at = datetime.fromisoformat(loc["recorded_at"].replace("Z", "+00:00"))
+                recorded_at = parse_timestamp(loc["recorded_at"])
                 if datetime.utcnow() - recorded_at.replace(tzinfo=None) > timedelta(hours=12):
                     continue  # Skip stale locations
 

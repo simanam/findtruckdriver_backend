@@ -179,12 +179,13 @@ async def root() -> Dict:
 
 
 # API v1 routes
-from app.routers import auth, drivers, locations, map
+from app.routers import auth, drivers, locations, map, follow_ups
 
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(drivers.router, prefix="/api/v1")
 app.include_router(locations.router, prefix="/api/v1")
 app.include_router(map.router, prefix="/api/v1")
+app.include_router(follow_ups.router, prefix="/api/v1")
 
 # TODO: Add remaining routers
 # from app.routers import location, status, map, stats, facilities

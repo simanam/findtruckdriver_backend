@@ -4,9 +4,12 @@ Pydantic models for driver location data
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from uuid import UUID
 from pydantic import BaseModel, Field, validator
+
+if TYPE_CHECKING:
+    from app.models.follow_up import FollowUpQuestion
 
 
 class LocationBase(BaseModel):
@@ -85,6 +88,17 @@ class LocationResponse(BaseModel):
     updated_at: datetime
 
 
+class MyLocationResponse(BaseModel):
+    """Response model for /locations/me endpoint"""
+    driver_id: UUID
+    handle: str
+    status: str
+    latitude: float
+    longitude: float
+    facility_name: Optional[str] = None
+    updated_at: datetime
+
+
 class CheckInResponse(BaseModel):
     """Response model for check-in"""
     success: bool
@@ -117,10 +131,40 @@ class WaitContext(BaseModel):
 
 
 class StatusChangeResponse(BaseModel):
-    """Response model for status change"""
+    """Response model for status change with optional follow-up question"""
     success: bool
     old_status: str
     new_status: str
     location: LocationResponse
     wait_context: Optional[WaitContext] = None
+    follow_up_question: Optional['FollowUpQuestion'] = None  # Forward reference
+    status_update_id: Optional[UUID] = None
     message: str
+
+
+class AppOpenRequest(BaseModel):
+    """Request model for app open/focus event"""
+    latitude: float = Field(..., ge=-90, le=90, description="Current latitude")
+    longitude: float = Field(..., ge=-180, le=180, description="Current longitude")
+    accuracy: Optional[float] = Field(None, ge=0, description="Location accuracy in meters")
+    heading: Optional[float] = Field(None, ge=0, lt=360, description="Direction of travel")
+    speed: Optional[float] = Field(None, ge=0, description="Speed in mph")
+
+
+class AppOpenResponse(BaseModel):
+    """Response model for app open detection"""
+    action: str = Field(..., description="Action to take: 'none' or 'prompt_status'")
+    reason: Optional[str] = Field(None, description="Reason for prompt: 'welcome_back', 'location_changed', or null")
+    message: Optional[str] = Field(None, description="Message to show user")
+    current_status: str = Field(..., description="Current driver status")
+    last_status: Optional[str] = Field(None, description="Last known status")
+    last_location_name: Optional[str] = Field(None, description="Last facility name")
+    distance_moved: Optional[float] = Field(None, description="Distance moved in miles")
+    hours_since_update: Optional[float] = Field(None, description="Hours since last update")
+    suggested_status: Optional[str] = Field(None, description="Suggested new status")
+
+
+# Resolve forward references after FollowUpQuestion is imported
+from app.models.follow_up import FollowUpQuestion
+StatusChangeResponse.model_rebuild()
+

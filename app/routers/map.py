@@ -21,20 +21,35 @@ router = APIRouter(prefix="/map", tags=["Map & Search"])
 
 @router.get("/drivers")
 async def get_drivers_in_area(
-    latitude: float = Query(..., ge=-90, le=90, description="Center latitude"),
-    longitude: float = Query(..., ge=-180, le=180, description="Center longitude"),
-    radius_miles: float = Query(25.0, ge=1, le=100, description="Search radius in miles"),
+    latitude: Optional[float] = Query(None, ge=-90, le=90, description="Center latitude"),
+    longitude: Optional[float] = Query(None, ge=-180, le=180, description="Center longitude"),
+    radius_miles: Optional[float] = Query(None, ge=1, le=200, description="Search radius in miles"),
+    min_lat: Optional[float] = Query(None, ge=-90, le=90, description="Minimum latitude (bounding box)"),
+    max_lat: Optional[float] = Query(None, ge=-90, le=90, description="Maximum latitude (bounding box)"),
+    min_lng: Optional[float] = Query(None, ge=-180, le=180, description="Minimum longitude (bounding box)"),
+    max_lng: Optional[float] = Query(None, ge=-180, le=180, description="Maximum longitude (bounding box)"),
     status_filter: Optional[str] = Query(None, description="Filter by status: rolling, waiting, parked"),
     limit: int = Query(100, ge=1, le=500, description="Maximum number of drivers to return"),
     db: Client = Depends(get_db_admin)
 ):
     """
     Get all drivers visible in the map area.
+    Supports two modes:
+    1. Center + radius: latitude, longitude, radius_miles
+    2. Bounding box: min_lat, max_lat, min_lng, max_lng
+
     Returns fuzzed locations for privacy.
     """
     try:
-        # Calculate geohash for the search area
-        center_geohash = gh.encode(latitude, longitude, precision=settings.geohash_precision_cluster)
+        # Determine which mode: center+radius or bounding box
+        using_bbox = all([min_lat is not None, max_lat is not None, min_lng is not None, max_lng is not None])
+        using_center = all([latitude is not None, longitude is not None])
+
+        if not using_bbox and not using_center:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Either provide (latitude, longitude, radius_miles) or (min_lat, max_lat, min_lng, max_lng)"
+            )
 
         # Get all active drivers (not stale)
         cutoff_time = (datetime.utcnow() - timedelta(hours=12)).isoformat()
@@ -48,6 +63,16 @@ async def get_drivers_in_area(
 
         drivers_in_area = []
 
+        # Calculate center for response (if using bbox, calculate center from bounds)
+        if using_bbox:
+            center_lat = (min_lat + max_lat) / 2
+            center_lng = (min_lng + max_lng) / 2
+        else:
+            center_lat = latitude
+            center_lng = longitude
+            if radius_miles is None:
+                radius_miles = 25.0  # Default radius
+
         for loc in locations_response.data if locations_response.data else []:
             driver = loc["drivers"]
 
@@ -55,23 +80,41 @@ async def get_drivers_in_area(
             if status_filter and driver["status"] != status_filter:
                 continue
 
-            # Calculate distance from center
-            distance = calculate_distance(
-                latitude,
-                longitude,
-                loc["fuzzed_latitude"],
-                loc["fuzzed_longitude"]
-            )
+            driver_lat = loc["fuzzed_latitude"]
+            driver_lng = loc["fuzzed_longitude"]
 
-            if distance <= radius_miles:
+            # Check if driver is in area (different logic for bbox vs center+radius)
+            in_area = False
+            distance_miles = 0.0
+
+            if using_bbox:
+                # Bounding box check
+                if (min_lat <= driver_lat <= max_lat and
+                    min_lng <= driver_lng <= max_lng):
+                    in_area = True
+                    # Calculate distance from center of bbox
+                    distance_miles = calculate_distance(
+                        center_lat, center_lng,
+                        driver_lat, driver_lng
+                    )
+            else:
+                # Radius check
+                distance_miles = calculate_distance(
+                    latitude, longitude,
+                    driver_lat, driver_lng
+                )
+                if distance_miles <= radius_miles:
+                    in_area = True
+
+            if in_area:
                 drivers_in_area.append({
                     "driver_id": driver["id"],
                     "handle": driver["handle"],
                     "status": driver["status"],
-                    "latitude": loc["fuzzed_latitude"],
-                    "longitude": loc["fuzzed_longitude"],
+                    "latitude": driver_lat,
+                    "longitude": driver_lng,
                     "geohash": loc["geohash"][:settings.geohash_precision_cluster],
-                    "distance_miles": round(distance, 2),
+                    "distance_miles": round(distance_miles, 2),
                     "last_active": driver["last_active"]
                 })
 
@@ -79,14 +122,23 @@ async def get_drivers_in_area(
         drivers_in_area.sort(key=lambda x: x["distance_miles"])
         drivers_in_area = drivers_in_area[:limit]
 
-        logger.info(f"Found {len(drivers_in_area)} drivers in {radius_miles}mi radius")
+        if using_bbox:
+            logger.info(f"Found {len(drivers_in_area)} drivers in bounding box")
+        else:
+            logger.info(f"Found {len(drivers_in_area)} drivers in {radius_miles}mi radius")
 
         return {
             "center": {
-                "latitude": latitude,
-                "longitude": longitude
+                "latitude": center_lat,
+                "longitude": center_lng
             },
-            "radius_miles": radius_miles,
+            "radius_miles": radius_miles if not using_bbox else None,
+            "bounds": {
+                "min_lat": min_lat,
+                "max_lat": max_lat,
+                "min_lng": min_lng,
+                "max_lng": max_lng
+            } if using_bbox else None,
             "count": len(drivers_in_area),
             "drivers": drivers_in_area
         }
@@ -307,6 +359,59 @@ async def get_hotspots(
         )
 
 
+@router.get("/stats/global")
+async def get_global_stats(
+    db: Client = Depends(get_db_admin)
+):
+    """
+    Get global network statistics (all drivers across the entire network).
+    Shows total drivers, status breakdown, and activity metrics.
+    Perfect for the stats bar at the top of the map.
+    """
+    try:
+        # Get all active drivers (not stale)
+        cutoff_time = (datetime.utcnow() - timedelta(hours=12)).isoformat()
+
+        locations_response = db.from_("driver_locations") \
+            .select("*, drivers!inner(id, status, last_active)") \
+            .gte("recorded_at", cutoff_time) \
+            .execute()
+
+        total_drivers = 0
+        status_counts = defaultdict(int)
+        recent_activity = 0  # Active in last hour
+
+        one_hour_ago = (datetime.utcnow() - timedelta(hours=1)).isoformat()
+
+        for loc in locations_response.data if locations_response.data else []:
+            driver = loc["drivers"]
+            total_drivers += 1
+            status_counts[driver["status"]] += 1
+
+            # Check if recently active
+            if driver["last_active"] >= one_hour_ago:
+                recent_activity += 1
+
+        return {
+            "total_drivers": total_drivers,
+            "rolling": status_counts.get("rolling", 0),
+            "waiting": status_counts.get("waiting", 0),
+            "parked": status_counts.get("parked", 0),
+            "recently_active": recent_activity,
+            "activity_percentage": round(
+                (recent_activity / total_drivers * 100) if total_drivers > 0 else 0, 1
+            ),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get global stats: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get global stats: {str(e)}"
+        )
+
+
 @router.get("/stats")
 async def get_map_stats(
     latitude: float = Query(..., ge=-90, le=90),
@@ -315,7 +420,7 @@ async def get_map_stats(
     db: Client = Depends(get_db_admin)
 ):
     """
-    Get aggregated statistics for a map area.
+    Get aggregated statistics for a specific map area (radius-based).
     Shows total drivers, status breakdown, and activity metrics.
     """
     try:

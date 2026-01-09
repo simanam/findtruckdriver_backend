@@ -258,8 +258,18 @@ mypy app/
 ### Database Migrations
 
 ```bash
-# TODO: Add Alembic migration commands when implemented
+# Run all pending migrations
+./migrations/run_migrations.sh
+
+# Force reapply all migrations (use with caution)
+./migrations/run_migrations.sh --force
 ```
+
+**Migration files:**
+- `001_initial_schema.sql` - Drivers table with RLS policies
+- `002_add_driver_locations.sql` - Location tracking with PostGIS
+
+See [migrations/README.md](./migrations/README.md) for details.
 
 ## 📝 Documentation
 
