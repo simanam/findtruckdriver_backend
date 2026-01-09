@@ -39,9 +39,26 @@ class Settings(BaseSettings):
 
     # Supabase
     supabase_url: str = Field(..., alias="SUPABASE_URL")
-    supabase_publishable_key: str = Field(..., alias="SUPABASE_PUBLISHABLE_KEY")
-    supabase_service_key: str = Field(..., alias="SUPABASE_SERVICE_KEY")
+
+    # New non-JWT keys (preferred)
+    supabase_publishable_key: str = Field(default="", alias="SUPABASE_PUBLISHABLE_KEY")
+    supabase_secret_key: str = Field(default="", alias="SUPABASE_SECRET_KEY")
+
+    # Legacy JWT keys (fallback support)
+    supabase_anon_key: str = Field(default="", alias="SUPABASE_ANON_KEY")
+    supabase_service_role_key: str = Field(default="", alias="SUPABASE_SERVICE_ROLE_KEY")
+
     database_url: str = Field(..., alias="DATABASE_URL")
+
+    @property
+    def supabase_client_key(self) -> str:
+        """Get the appropriate client key (publishable or anon)"""
+        return self.supabase_publishable_key or self.supabase_anon_key
+
+    @property
+    def supabase_admin_key(self) -> str:
+        """Get the appropriate admin key (secret or service_role)"""
+        return self.supabase_secret_key or self.supabase_service_role_key
 
     # Redis
     redis_url: str = Field(default="redis://localhost:6379", alias="REDIS_URL")

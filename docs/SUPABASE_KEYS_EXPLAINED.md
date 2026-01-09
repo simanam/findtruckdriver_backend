@@ -1,190 +1,304 @@
-# Supabase Keys Explained
+# Supabase API Keys Guide
 
-## TL;DR: You Need BOTH Keys
+## TL;DR
 
-✅ **SUPABASE_PUBLISHABLE_KEY** - For client operations (frontend)
-✅ **SUPABASE_SERVICE_KEY** - For server operations (backend API)
+✅ **Use NEW keys** (preferred): `SUPABASE_PUBLISHABLE_KEY` + `SUPABASE_SECRET_KEY`
+⚠️ **Legacy keys still work**: `SUPABASE_ANON_KEY` + `SUPABASE_SERVICE_ROLE_KEY`
+
+Our backend supports **BOTH** key types with automatic fallback.
 
 ---
 
-## The Two Keys
+## The New Supabase Key System (2024+)
 
-### 1. SUPABASE_PUBLISHABLE_KEY (formerly "anon key")
+Supabase is transitioning from JWT-based keys to non-JWT keys for better security and performance.
 
-**Where to find it**: Supabase Dashboard → Project Settings → API → "Project API keys" → `publishable key`
+### 1. SUPABASE_PUBLISHABLE_KEY (NEW)
 
-**Purpose**: Client-side operations with Row Level Security enforced
+**Format**: `sb_publishable_...`
+
+**Where to find**: Supabase Dashboard → Project Settings → API → "Publishable key"
 
 **Characteristics**:
-- ✅ Safe to expose in frontend code
-- ✅ Subject to Row Level Security (RLS) policies
-- ✅ Users can only access data allowed by RLS
-- ✅ Used for authenticated user operations
+- ✅ **Safe to expose** in frontend code, mobile apps, CLIs
+- ✅ **RLS enforced** - respects Row Level Security policies
+- ✅ Low privileges - users access only allowed data
+- 🆕 Non-JWT based (faster, more secure)
 
-**Use cases**:
+**Use for**:
 - Frontend authentication
-- User-specific queries
-- Operations that respect RLS policies
 - Mobile app API calls
+- User-specific queries
+- Any client-side operations
 
-**Example**:
-```javascript
-// Frontend (safe to expose)
+**Example** (Frontend):
+```typescript
+// ✅ Safe to expose in frontend
 const supabase = createClient(
-  'https://xxx.supabase.co',
-  'eyJhbGc...publishable_key_here'  // ✅ OK in frontend
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!  // Safe in browser
 )
 ```
 
 ---
 
-### 2. SUPABASE_SERVICE_KEY (service_role key)
+### 2. SUPABASE_SECRET_KEY (NEW)
 
-**Where to find it**: Supabase Dashboard → Project Settings → API → "Project API keys" → `service_role` (secret)
+**Format**: `sb_secret_...`
 
-**Purpose**: Server-side admin operations that bypass RLS
+**Where to find**: Supabase Dashboard → Project Settings → API → "Secret key" (click Reveal)
 
 **Characteristics**:
-- 🔒 **NEVER expose in frontend** - only use server-side
-- 🔒 Bypasses ALL Row Level Security policies
-- 🔒 Full admin access to database
-- 🔒 Can read/write any data regardless of RLS
+- 🔒 **NEVER expose** - backend/server-side only
+- 🔒 **Bypasses RLS** - full database access
+- 🔒 Elevated privileges - admin operations
+- 🆕 Non-JWT based
 
-**Use cases**:
+**Use for**:
 - Backend API operations
-- Admin tasks (bulk updates, cleanup jobs)
-- System operations (stats aggregation, hotspot detection)
-- Operations that need to query across all users
+- Admin tasks
+- System operations (stats, cleanup)
+- Operations across all users
 
-**Example**:
+**Example** (Backend):
 ```python
-# Backend ONLY (never expose)
+# 🔒 Backend only - never expose
 supabase = create_client(
     os.environ["SUPABASE_URL"],
-    os.environ["SUPABASE_SERVICE_KEY"]  # 🔒 Server-side only
+    os.environ["SUPABASE_SECRET_KEY"]  # Admin access
 )
 ```
 
 ---
 
-## Why We Need Both in This Project
+## Legacy Keys (Still Supported)
 
-### Backend Uses SERVICE_KEY
+### 3. SUPABASE_ANON_KEY (LEGACY)
 
-Our FastAPI backend needs the **SERVICE_KEY** because:
+**Format**: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`
 
-1. **Stats Aggregation**: Count all drivers across regions (bypasses RLS)
-2. **Map Data**: Return aggregated driver data for all zoom levels
-3. **Hotspot Detection**: Analyze clusters of waiting drivers system-wide
-4. **Admin Operations**: Create/update facilities, cleanup old data
-5. **System Health**: Monitor inactive drivers, calculate averages
+**Equivalent to**: `SUPABASE_PUBLISHABLE_KEY`
 
-Example operations requiring SERVICE_KEY:
+- JWT-based (older format)
+- Same functionality as publishable key
+- Still works, but new projects should use publishable key
+
+---
+
+### 4. SUPABASE_SERVICE_ROLE_KEY (LEGACY)
+
+**Format**: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`
+
+**Equivalent to**: `SUPABASE_SECRET_KEY`
+
+- JWT-based (older format)
+- Same functionality as secret key
+- Still works, but new projects should use secret key
+
+---
+
+## Our Backend Configuration
+
+Our `config.py` supports **BOTH** key types with smart fallback:
+
 ```python
-# Get ALL active drivers for map view (needs to bypass RLS)
-drivers = supabase.from_("drivers") \
+# Tries new keys first, falls back to legacy keys
+@property
+def supabase_client_key(self) -> str:
+    """Returns: publishable_key OR anon_key"""
+    return self.supabase_publishable_key or self.supabase_anon_key
+
+@property
+def supabase_admin_key(self) -> str:
+    """Returns: secret_key OR service_role_key"""
+    return self.supabase_secret_key or self.supabase_service_role_key
+```
+
+**This means you can use**:
+- ✅ New keys only
+- ✅ Legacy keys only
+- ✅ Mix of both (will prefer new keys)
+
+---
+
+## Setting Up Your Keys
+
+### Option 1: Using NEW Keys (Recommended)
+
+1. Go to [Supabase Dashboard](https://supabase.com/dashboard)
+2. Project Settings → API
+3. Copy **"Publishable key"** → `SUPABASE_PUBLISHABLE_KEY`
+4. Click **Reveal** on "Secret key" → Copy → `SUPABASE_SECRET_KEY`
+
+```bash
+# .env
+SUPABASE_URL="https://yourproject.supabase.co"
+SUPABASE_PUBLISHABLE_KEY="sb_publishable_..."  # ✅ New format
+SUPABASE_SECRET_KEY="sb_secret_..."            # ✅ New format
+```
+
+### Option 2: Using Legacy Keys (Still Works)
+
+1. Go to [Supabase Dashboard](https://supabase.com/dashboard)
+2. Project Settings → API
+3. Copy **"anon / public"** → `SUPABASE_ANON_KEY`
+4. Copy **"service_role"** → `SUPABASE_SERVICE_ROLE_KEY`
+
+```bash
+# .env
+SUPABASE_URL="https://yourproject.supabase.co"
+SUPABASE_ANON_KEY="eyJhbGc..."                    # Legacy JWT
+SUPABASE_SERVICE_ROLE_KEY="eyJhbGc..."            # Legacy JWT
+```
+
+### Option 3: Both (Maximum Compatibility)
+
+```bash
+# .env - Both sets of keys
+SUPABASE_URL="https://yourproject.supabase.co"
+
+# New keys (preferred)
+SUPABASE_PUBLISHABLE_KEY="sb_publishable_..."
+SUPABASE_SECRET_KEY="sb_secret_..."
+
+# Legacy keys (fallback)
+SUPABASE_ANON_KEY="eyJhbGc..."
+SUPABASE_SERVICE_ROLE_KEY="eyJhbGc..."
+```
+
+---
+
+## Why We Need Admin/Secret Keys in Backend
+
+Our FastAPI backend **requires the admin key** (secret or service_role) because:
+
+### 1. Stats Aggregation
+```python
+# Count ALL drivers across regions (needs admin access)
+all_drivers = supabase.from_("drivers") \
     .select("*") \
     .gte("last_active", thirty_mins_ago) \
-    .execute()  # Returns all drivers (admin access)
+    .execute()  # Returns all drivers (bypasses RLS)
 ```
 
-### Frontend Uses PUBLISHABLE_KEY
-
-The Next.js frontend uses **PUBLISHABLE_KEY** because:
-
-1. **User Authentication**: Sign in/sign up flows
-2. **Profile Updates**: User updating their own status/location
-3. **Personal Data**: Fetching their own driver record
-4. **Security**: RLS ensures users can't access others' sensitive data
-
-Example operations using PUBLISHABLE_KEY:
-```typescript
-// User can only update their OWN profile (RLS enforced)
-const { data } = await supabase
-  .from('drivers')
-  .update({ status: 'rolling' })
-  .eq('user_id', user.id)  // ✅ RLS ensures this matches auth.uid()
+### 2. Map Data Generation
+```python
+# Get aggregated data for map view (all users)
+clusters = supabase.from_("cluster_stats") \
+    .select("*") \
+    .in_("geohash", geohashes) \
+    .execute()  # Admin access needed
 ```
+
+### 3. Hotspot Detection
+```python
+# Analyze waiting drivers system-wide
+waiting_drivers = supabase.from_("drivers") \
+    .select("*, driver_locations(*)") \
+    .eq("status", "waiting") \
+    .execute()  # Needs to see all waiting drivers
+```
+
+### 4. System Operations
+- Cleanup old data
+- Calculate averages
+- Update facility stats
+- Background jobs
+
+**Without admin key**: These operations would fail due to RLS restrictions.
+
+---
+
+## Key Comparison Table
+
+| Feature | Publishable / Anon | Secret / Service Role |
+|---------|-------------------|----------------------|
+| **Format** | `sb_publishable_...` or JWT | `sb_secret_...` or JWT |
+| **RLS** | ✅ Enforced | ❌ Bypassed |
+| **Frontend Safe** | ✅ Yes | 🔒 Never |
+| **Use In** | Client-side | Server-side only |
+| **Access Level** | User data only | All data (admin) |
+| **Required For** | Auth, user queries | Stats, admin ops |
 
 ---
 
 ## Security Best Practices
 
 ### ✅ DO:
-- Store SERVICE_KEY in `.env` (never commit)
-- Use SERVICE_KEY only in backend code
-- Use PUBLISHABLE_KEY in frontend
-- Keep `.env` in `.gitignore`
+- Use **new keys** (`sb_publishable_...` / `sb_secret_...`) for new projects
+- Store secret/service_role keys in `.env` only
+- Use secret key only in backend code
+- Use publishable/anon key in frontend
+- Add `.env` to `.gitignore`
 - Rotate keys if compromised
 
 ### ❌ DON'T:
-- Expose SERVICE_KEY in frontend/mobile apps
-- Commit SERVICE_KEY to Git
-- Use SERVICE_KEY in client-side JavaScript
-- Share SERVICE_KEY in public documentation
+- Expose secret/service_role key in frontend
+- Commit secret keys to Git
+- Use admin keys in client JavaScript
+- Share secret keys publicly
 - Hardcode keys in source code
 
 ---
 
-## Finding Your Keys
+## Testing Your Keys
 
-1. Go to [Supabase Dashboard](https://supabase.com/dashboard)
-2. Select your project
-3. Click **Project Settings** (cog icon)
-4. Go to **API** section
-5. Copy both keys:
-   - **Project API keys** → `publishable` → Copy
-   - **Project API keys** → `service_role` → Click "Reveal" → Copy
-
----
-
-## Setting Up Your `.env`
-
-```bash
-# Copy the example
-cp .env.example .env
-
-# Edit .env and add your keys:
-SUPABASE_URL="https://your-project.supabase.co"
-SUPABASE_PUBLISHABLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."  # From "publishable" section
-SUPABASE_SERVICE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."      # From "service_role" section (click Reveal)
-```
-
----
-
-## Testing Key Permissions
-
-### Test Publishable Key (should respect RLS):
+### Test Client Key (should respect RLS):
 ```python
 from supabase import create_client
+from app.config import settings
 
-# Using publishable key
-client = create_client(url, publishable_key)
+# Using client key (publishable or anon)
+client = create_client(
+    settings.supabase_url,
+    settings.supabase_client_key  # Our helper property
+)
 
-# This should only return drivers where RLS policy allows
+# Should only return data allowed by RLS
 response = client.from_("drivers").select("*").execute()
-print(f"Accessible drivers: {len(response.data)}")  # Limited by RLS
+print(f"Accessible: {len(response.data)}")  # Limited by RLS
 ```
 
-### Test Service Key (should bypass RLS):
+### Test Admin Key (should bypass RLS):
 ```python
 from supabase import create_client
+from app.config import settings
 
-# Using service key
-admin = create_client(url, service_key)
+# Using admin key (secret or service_role)
+admin = create_client(
+    settings.supabase_url,
+    settings.supabase_admin_key  # Our helper property
+)
 
-# This returns ALL drivers (bypasses RLS)
+# Should return ALL data (bypasses RLS)
 response = admin.from_("drivers").select("*").execute()
-print(f"Total drivers: {len(response.data)}")  # All drivers
+print(f"Total: {len(response.data)}")  # All drivers
 ```
+
+---
+
+## Migration Guide
+
+### If you have legacy keys:
+✅ **Keep them** - they still work fine
+✅ **Add new keys** when available - our code supports both
+✅ **No code changes needed** - automatic fallback
+
+### Getting new keys:
+1. Supabase Dashboard → Project Settings → API
+2. Look for "Publishable key" and "Secret key" sections
+3. If you see `sb_publishable_...` format, you have new keys
+4. If you only see JWT keys, legacy keys are still active
 
 ---
 
 ## Summary
 
-| Key | Use In | RLS | Expose? | Purpose |
-|-----|--------|-----|---------|---------|
-| **PUBLISHABLE_KEY** | Frontend | ✅ Enforced | ✅ Safe | User operations |
-| **SERVICE_KEY** | Backend | ❌ Bypassed | 🔒 Never | Admin operations |
+| Key Type | Format | Use | Expose? | RLS |
+|----------|--------|-----|---------|-----|
+| **NEW: Publishable** | `sb_publishable_...` | Frontend | ✅ Safe | ✅ Enforced |
+| **NEW: Secret** | `sb_secret_...` | Backend | 🔒 Never | ❌ Bypassed |
+| **Legacy: Anon** | JWT `eyJh...` | Frontend | ✅ Safe | ✅ Enforced |
+| **Legacy: Service Role** | JWT `eyJh...` | Backend | 🔒 Never | ❌ Bypassed |
 
-**Bottom line**: Keep both keys, use SERVICE_KEY in backend for admin operations, use PUBLISHABLE_KEY in frontend for user operations.
+**Our backend works with both** - use whichever keys your Supabase project provides!
