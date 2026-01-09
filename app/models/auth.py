@@ -43,6 +43,25 @@ class OTPVerify(BaseModel):
         return v
 
 
+class EmailOTPRequest(BaseModel):
+    """Request OTP code via email (passwordless)"""
+    email: EmailStr = Field(..., description="Email address")
+
+
+class EmailOTPVerify(BaseModel):
+    """Verify email OTP code"""
+    email: EmailStr = Field(..., description="Email address")
+    code: str = Field(..., min_length=6, max_length=8, description="OTP code (6-8 digits)")
+
+    @validator("code")
+    def validate_code(cls, v):
+        if not v.isdigit():
+            raise ValueError("Code must be digits only")
+        if len(v) < 6 or len(v) > 8:
+            raise ValueError("Code must be 6-8 digits")
+        return v
+
+
 class MagicLinkRequest(BaseModel):
     """Request magic link via email"""
     email: EmailStr = Field(..., description="Email address")

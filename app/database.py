@@ -19,59 +19,47 @@ class Database:
 
     def get_client(self) -> Client:
         """
-        Get Supabase client for regular operations (uses client key).
+        Get Supabase client for regular operations (uses public key).
         This client respects Row Level Security.
         """
         if self._client is None:
             logger.info("Initializing Supabase client...")
 
-            client_key = settings.supabase_client_key
+            public_key = settings.supabase_public_key
 
-            # Validate we have a real key
-            if not client_key or client_key.startswith("sb_publishable_...") or client_key.startswith("eyJhbGc..."):
+            if not public_key:
                 raise ValueError(
-                    "Invalid Supabase client key. Please set either:\n"
-                    "  - SUPABASE_PUBLISHABLE_KEY (new format: sb_publishable_...)\n"
-                    "  - SUPABASE_ANON_KEY (legacy JWT format: eyJh...)\n"
+                    "Supabase public key not found. Please set either:\n"
+                    "  - SUPABASE_PUBLISHABLE_KEY (new format)\n"
+                    "  - SUPABASE_ANON_KEY (legacy format)\n"
                     "Check your .env file and Supabase Dashboard → Project Settings → API"
                 )
 
-            logger.info(f"Using client key type: {client_key[:15]}...")
-
-            self._client = create_client(
-                settings.supabase_url,
-                client_key
-            )
+            self._client = create_client(settings.supabase_url, public_key)
             logger.info("✅ Supabase client initialized")
         return self._client
 
     def get_admin_client(self) -> Client:
         """
-        Get Supabase admin client (uses service/secret key).
+        Get Supabase admin client (uses private key).
         This client BYPASSES Row Level Security.
         Use for admin operations, stats aggregation, system tasks.
         """
         if self._admin_client is None:
             logger.info("Initializing Supabase admin client...")
 
-            admin_key = settings.supabase_admin_key
+            private_key = settings.supabase_private_key
 
-            # Validate we have a real key
-            if not admin_key or admin_key.startswith("sb_secret_...") or admin_key.startswith("eyJhbGc..."):
+            if not private_key:
                 raise ValueError(
-                    "Invalid Supabase admin key. Please set either:\n"
-                    "  - SUPABASE_SECRET_KEY (new format: sb_secret_...)\n"
-                    "  - SUPABASE_SERVICE_ROLE_KEY (legacy JWT format: eyJh...)\n"
+                    "Supabase private key not found. Please set either:\n"
+                    "  - SUPABASE_SECRET_KEY (new format)\n"
+                    "  - SUPABASE_SERVICE_KEY (legacy format)\n"
                     "Check your .env file and Supabase Dashboard → Project Settings → API\n"
-                    "⚠️  NEVER expose the secret/service_role key in frontend code!"
+                    "⚠️  NEVER expose the private key in frontend code!"
                 )
 
-            logger.info(f"Using admin key type: {admin_key[:15]}...")
-
-            self._admin_client = create_client(
-                settings.supabase_url,
-                admin_key
-            )
+            self._admin_client = create_client(settings.supabase_url, private_key)
             logger.info("✅ Supabase admin client initialized")
         return self._admin_client
 

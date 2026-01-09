@@ -39,8 +39,13 @@ class DriverBase(BaseModel):
         return v.lower()
 
 
+class DriverCreateRequest(DriverBase):
+    """Model for driver creation request from frontend (no user_id)"""
+    pass
+
+
 class DriverCreate(DriverBase):
-    """Model for creating a new driver"""
+    """Model for creating a new driver (internal, includes user_id)"""
     user_id: UUID = Field(..., description="Supabase auth user ID")
 
 
@@ -53,6 +58,17 @@ class DriverUpdate(BaseModel):
     @validator("status")
     def validate_status(cls, v):
         if v is not None and v not in DriverStatus.all():
+            raise ValueError(f"Status must be one of: {', '.join(DriverStatus.all())}")
+        return v
+
+
+class StatusUpdate(BaseModel):
+    """Model for updating driver status only"""
+    status: str = Field(..., description="New status")
+
+    @validator("status")
+    def validate_status(cls, v):
+        if v not in DriverStatus.all():
             raise ValueError(f"Status must be one of: {', '.join(DriverStatus.all())}")
         return v
 

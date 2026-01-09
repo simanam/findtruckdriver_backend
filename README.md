@@ -4,75 +4,87 @@ FastAPI backend for the Find a Truck Driver real-time truck driver tracking plat
 
 ## 🚛 Overview
 
-This backend powers a real-time, anonymous truck driver tracking application that displays driver locations and statuses across the United States. The system is designed to handle 50,000+ concurrent drivers with real-time location updates.
+This backend powers a real-time, anonymous truck driver tracking application that displays driver locations and statuses across the United States.
 
 ## 🏗️ Architecture
 
-- **Framework**: FastAPI (Python 3.11+)
+- **Framework**: FastAPI (Python 3.9+)
 - **Database**: Supabase (PostgreSQL + PostGIS)
-- **Cache**: Redis/Upstash
-- **Real-Time**: Supabase Realtime + WebSockets
-- **Authentication**: Supabase Auth (Phone OTP)
+- **Cache**: Redis (configured, not yet integrated)
+- **Authentication**: Supabase Auth (Email OTP, Phone OTP, Magic Link)
 
 ## 📋 Features
 
-- **Phone OTP Authentication**: Passwordless login via SMS
-- **Real-Time Location Tracking**: GPS tracking with privacy-first fuzzing
+- **Email OTP Authentication**: Passwordless login via email (FREE with Supabase)
+- **Phone OTP**: Alternative SMS authentication
+- **Magic Link**: Email-based authentication
+- **Location Tracking**: Privacy-first location fuzzing
 - **Status Management**: Rolling, Waiting, Parked status tracking
-- **Map Data API**: Four-tier zoom-based visualization system
-- **Hotspot Detection**: Automatic detection of detention areas
-- **Stats Aggregation**: Real-time global and regional statistics
-- **WebSocket Broadcasting**: Live updates to connected clients
+- **Map Search**: Find nearby drivers, clusters, hotspots
+- **Statistics**: Real-time activity metrics
+- **22 API Endpoints**: Complete REST API
 
-## 🚀 Quick Start
+## 🎯 Quick Start for Frontend Developers
+
+**→ [FRONTEND_SETUP.md](./FRONTEND_SETUP.md)** - Get your frontend connected in 5 minutes!
+
+**Complete Documentation:**
+- [Quick Start Guide](./docs/QUICK_START_FRONTEND.md) - All endpoints with examples
+- [API URLs Reference](./docs/API_URLS_REFERENCE.md) - Copy & paste ready URLs
+- [Troubleshooting](./docs/FRONTEND_TROUBLESHOOTING.md) - Common issues & solutions
+- [Full Integration Guide](./docs/FRONTEND_INTEGRATION.md) - Complete React Native code
+
+## 🚀 Quick Start for Backend
 
 ### Prerequisites
 
-- Python 3.11+
-- PostgreSQL with PostGIS (via Supabase)
-- Redis server
-- Supabase account
+- Python 3.9+
+- Supabase account (database included)
+- Your Supabase API keys
 
 ### Installation
 
-1. **Clone the repository** (if not already done)
-
-2. **Navigate to backend directory**
+1. **Navigate to backend directory**
    ```bash
    cd finddriverbackend
    ```
 
-3. **Create virtual environment**
+2. **Run setup script**
    ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ./setup.sh
    ```
+   This creates venv and installs all dependencies.
 
-4. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-5. **Set up environment variables**
+3. **Configure environment**
    ```bash
    cp .env.example .env
-   # Edit .env with your actual credentials
+   # Edit .env with your Supabase credentials
    ```
 
-6. **Run database migrations** (when available)
+   Required variables:
    ```bash
-   # TODO: Add migration commands
+   SUPABASE_URL="https://your-project.supabase.co"
+   SUPABASE_PUBLISHABLE_KEY="sb_publishable_..."
+   SUPABASE_SECRET_KEY="sb_secret_..."
+   DATABASE_URL="postgresql://..."
    ```
 
-7. **Start the development server**
+4. **Start the development server**
    ```bash
-   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   ./run_dev.sh
    ```
 
-8. **Access the API**
+5. **Access the API**
    - API: http://localhost:8000
    - Interactive Docs: http://localhost:8000/docs
-   - Alternative Docs: http://localhost:8000/redoc
+   - Health Check: http://localhost:8000/health
+
+### Test It Works
+
+```bash
+curl http://localhost:8000/health
+# Should return: {"status":"healthy",...}
+```
 
 ## 📁 Project Structure
 
@@ -124,43 +136,51 @@ finddriverbackend/
 └── ERROR_TRACKER.md
 ```
 
-## 🔌 API Endpoints
+## 🔌 API Endpoints (22 Total)
 
-### Authentication
-- `POST /api/v1/auth/request-otp` - Request OTP code
-- `POST /api/v1/auth/verify-otp` - Verify OTP and login
-- `POST /api/v1/auth/refresh` - Refresh access token
+### Authentication (8 endpoints)
+- `POST /api/v1/auth/email/otp/request` - Request email OTP (FREE)
+- `POST /api/v1/auth/email/otp/verify` - Verify email OTP
+- `POST /api/v1/auth/otp/request` - Request phone OTP
+- `POST /api/v1/auth/otp/verify` - Verify phone OTP
+- `POST /api/v1/auth/magic-link/request` - Request magic link
+- `POST /api/v1/auth/token/refresh` - Refresh access token
+- `POST /api/v1/auth/logout` - Logout user
+- `GET /api/v1/auth/me` - Get current user
 
-### Onboarding
-- `POST /api/v1/onboarding/check-handle` - Check handle availability
-- `GET /api/v1/onboarding/suggest-handles` - Get handle suggestions
-- `GET /api/v1/onboarding/avatars` - List available avatars
-- `POST /api/v1/onboarding/complete` - Complete onboarding
+### Driver Profile (6 endpoints)
+- `POST /api/v1/drivers` - Create driver profile
+- `GET /api/v1/drivers/me` - Get my profile
+- `PATCH /api/v1/drivers/me` - Update my profile
+- `PATCH /api/v1/drivers/me/status` - Update status only
+- `GET /api/v1/drivers/{handle}` - Get driver by handle
+- `GET /api/v1/drivers/id/{driver_id}` - Get driver by ID
 
-### Location & Status
-- `POST /api/v1/location` - Update driver location
-- `PATCH /api/v1/status` - Update driver status
-- `GET /api/v1/drivers/nearby` - Get nearby drivers
+### Location & Check-in (4 endpoints)
+- `POST /api/v1/locations/check-in` - Manual check-in
+- `POST /api/v1/locations/status/update` - Update status with location
+- `GET /api/v1/locations/me` - Get my current location
+- `GET /api/v1/locations/nearby` - Find nearby drivers
 
-### Map Data
-- `GET /api/v1/map/view` - Get map data (zoom-aware)
+### Map & Search (4 endpoints)
+- `GET /api/v1/map/drivers` - Get drivers in map area
+- `GET /api/v1/map/clusters` - Get driver clusters
+- `GET /api/v1/map/hotspots` - Get hotspot locations
+- `GET /api/v1/map/stats` - Get map statistics
 
-### Statistics
-- `GET /api/v1/stats/global` - Global driver counts
-- `GET /api/v1/stats/regional` - Regional statistics
-
-### Hotspots & Facilities
-- `GET /api/v1/hotspots/nearby` - Get nearby hotspots
-- `GET /api/v1/facilities/{id}` - Get facility details
+**See [docs/API_URLS_REFERENCE.md](./docs/API_URLS_REFERENCE.md) for complete endpoint list with examples.**
 
 ## 🔐 Authentication
 
-The API uses JWT tokens for authentication:
+**Recommended: Email OTP (Free, No SMS Costs)**
 
-1. Request OTP via phone number
-2. Verify OTP to receive access token
-3. Include token in `Authorization: Bearer <token>` header
-4. Refresh token before expiry
+1. User enters email → `POST /api/v1/auth/email/otp/request`
+2. User receives 8-digit code in email
+3. User enters code → `POST /api/v1/auth/email/otp/verify`
+4. Receive access_token and refresh_token
+5. Include token in all requests: `Authorization: Bearer <token>`
+
+**See [FRONTEND_SETUP.md](./FRONTEND_SETUP.md) for complete authentication guide.**
 
 ## 🗺️ Location Privacy
 
@@ -243,9 +263,19 @@ mypy app/
 
 ## 📝 Documentation
 
-- [Implementation Checklist](IMPLEMENTATION_CHECKLIST.md) - Development roadmap
-- [Audit Log](AUDIT_LOG.md) - Decision tracking
-- [Error Tracker](ERROR_TRACKER.md) - Known issues
+### For Frontend Developers
+- **[FRONTEND_SETUP.md](./FRONTEND_SETUP.md)** - 5-minute setup guide ⭐
+- **[docs/QUICK_START_FRONTEND.md](./docs/QUICK_START_FRONTEND.md)** - All endpoints with examples
+- **[docs/API_URLS_REFERENCE.md](./docs/API_URLS_REFERENCE.md)** - Complete URL list
+- **[docs/FRONTEND_TROUBLESHOOTING.md](./docs/FRONTEND_TROUBLESHOOTING.md)** - Common issues
+- **[docs/FRONTEND_INTEGRATION.md](./docs/FRONTEND_INTEGRATION.md)** - Full integration guide
+
+### For Backend Developers
+- **[IMPLEMENTATION_SUMMARY.md](./IMPLEMENTATION_SUMMARY.md)** - Backend overview
+- **[API_ENDPOINTS.md](./API_ENDPOINTS.md)** - API reference
+- **[docs/EMAIL_OTP_SETUP.md](./docs/EMAIL_OTP_SETUP.md)** - Email authentication guide
+- **[docs/SUPABASE_EMAIL_CONFIG.md](./docs/SUPABASE_EMAIL_CONFIG.md)** - Supabase config
+- **[docs/database_schema.sql](./docs/database_schema.sql)** - Database schema
 
 ## 🤝 Contributing
 

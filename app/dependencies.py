@@ -85,20 +85,20 @@ async def get_current_driver(
         HTTPException: If driver profile not found
     """
     try:
-        # Query drivers table for this user
+        # Query drivers table for this user (without .single())
         response = db.from_("drivers") \
             .select("*") \
             .eq("user_id", current_user.id) \
-            .single() \
             .execute()
 
-        if not response.data:
+        # Check if driver profile exists
+        if not response.data or len(response.data) == 0:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Driver profile not found. Please complete onboarding."
             )
 
-        return response.data
+        return response.data[0]
 
     except HTTPException:
         raise

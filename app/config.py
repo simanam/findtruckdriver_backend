@@ -40,25 +40,25 @@ class Settings(BaseSettings):
     # Supabase
     supabase_url: str = Field(..., alias="SUPABASE_URL")
 
-    # New non-JWT keys (preferred)
+    # New Supabase API Keys (2025+) - preferred
     supabase_publishable_key: str = Field(default="", alias="SUPABASE_PUBLISHABLE_KEY")
     supabase_secret_key: str = Field(default="", alias="SUPABASE_SECRET_KEY")
 
-    # Legacy JWT keys (fallback support)
+    # Legacy Supabase API Keys (deprecated, for backwards compatibility)
     supabase_anon_key: str = Field(default="", alias="SUPABASE_ANON_KEY")
-    supabase_service_role_key: str = Field(default="", alias="SUPABASE_SERVICE_ROLE_KEY")
+    supabase_service_key: str = Field(default="", alias="SUPABASE_SERVICE_KEY")
 
     database_url: str = Field(..., alias="DATABASE_URL")
 
     @property
-    def supabase_client_key(self) -> str:
-        """Get the appropriate client key (publishable or anon)"""
+    def supabase_public_key(self) -> str:
+        """Get the public key (new publishable or legacy anon)."""
         return self.supabase_publishable_key or self.supabase_anon_key
 
     @property
-    def supabase_admin_key(self) -> str:
-        """Get the appropriate admin key (secret or service_role)"""
-        return self.supabase_secret_key or self.supabase_service_role_key
+    def supabase_private_key(self) -> str:
+        """Get the private key (new secret or legacy service_key)."""
+        return self.supabase_secret_key or self.supabase_service_key
 
     # Redis
     redis_url: str = Field(default="redis://localhost:6379", alias="REDIS_URL")
@@ -66,21 +66,8 @@ class Settings(BaseSettings):
     redis_db: int = Field(default=0, alias="REDIS_DB")
     redis_max_connections: int = Field(default=50, alias="REDIS_MAX_CONNECTIONS")
 
-    # JWT
-    jwt_secret_key: str = Field(..., alias="JWT_SECRET_KEY")
-    jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
-    jwt_access_token_expire_minutes: int = Field(
-        default=60,
-        alias="JWT_ACCESS_TOKEN_EXPIRE_MINUTES"
-    )
-    jwt_refresh_token_expire_days: int = Field(
-        default=30,
-        alias="JWT_REFRESH_TOKEN_EXPIRE_DAYS"
-    )
-
-    # OTP
-    otp_expiry_minutes: int = Field(default=10, alias="OTP_EXPIRY_MINUTES")
-    otp_max_attempts: int = Field(default=3, alias="OTP_MAX_ATTEMPTS")
+    # Note: JWT and OTP settings are managed by Supabase Auth
+    # Supabase handles token generation, validation, expiry, and OTP sending
 
     # SMS Provider (Twilio - optional)
     twilio_account_sid: str = Field(default="", alias="TWILIO_ACCOUNT_SID")
