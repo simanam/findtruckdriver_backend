@@ -39,7 +39,7 @@ class Settings(BaseSettings):
 
     # Supabase
     supabase_url: str = Field(..., alias="SUPABASE_URL")
-    supabase_anon_key: str = Field(..., alias="SUPABASE_ANON_KEY")
+    supabase_publishable_key: str = Field(..., alias="SUPABASE_PUBLISHABLE_KEY")
     supabase_service_key: str = Field(..., alias="SUPABASE_SERVICE_KEY")
     database_url: str = Field(..., alias="DATABASE_URL")
 
