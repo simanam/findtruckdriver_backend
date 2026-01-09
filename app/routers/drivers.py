@@ -19,6 +19,7 @@ from app.models.driver import (
 )
 from app.models.follow_up import StatusUpdateWithFollowUp
 from app.services.follow_up_engine import determine_follow_up
+from app.services.facility_discovery import find_nearby_facility
 from app.utils.location import calculate_distance
 from app.dependencies import get_current_user, get_current_driver
 import logging
@@ -290,21 +291,14 @@ async def update_my_status(
 
         # Only calculate context if we have location data
         if current_latitude is not None and current_longitude is not None:
-            # Try to find facility at current location
-            facilities = db.from_("facilities").select("*").execute()
-
-            if facilities.data:
-                for facility in facilities.data:
-                    distance = calculate_distance(
-                        current_latitude,
-                        current_longitude,
-                        facility["latitude"],
-                        facility["longitude"]
-                    )
-                    if distance <= 0.3:  # Within 0.3 miles
-                        facility_id = facility["id"]
-                        facility_name = facility["name"]
-                        break
+            # Find facility using smart discovery (queries OSM if needed)
+            facility_id, facility_name = find_nearby_facility(
+                db=db,
+                latitude=current_latitude,
+                longitude=current_longitude,
+                max_distance_miles=0.3,
+                discover_if_missing=True  # Trigger OSM query for unmapped areas
+            )
 
             # Determine follow-up question based on context
             context, question = determine_follow_up(

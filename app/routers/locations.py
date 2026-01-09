@@ -20,6 +20,7 @@ from app.models.location import (
     AppOpenResponse
 )
 from app.services.follow_up_engine import determine_follow_up
+from app.services.facility_discovery import find_nearby_facility
 from app.dependencies import get_current_driver
 from app.utils.location import fuzz_location, calculate_distance
 from app.config import settings
@@ -437,23 +438,14 @@ async def update_status_with_location(
                 "longitude": fuzzed_lng
             }).execute()
 
-        # Find facility
-        facility_id = None
-        facility_name = None
-        facilities = db.from_("facilities").select("*").execute()
-
-        if facilities.data:
-            for facility in facilities.data:
-                distance = calculate_distance(
-                    request.latitude,
-                    request.longitude,
-                    facility["latitude"],
-                    facility["longitude"]
-                )
-                if distance <= 0.3:  # Within 0.3 miles
-                    facility_id = facility["id"]
-                    facility_name = facility["name"]
-                    break
+        # Find facility using smart discovery (queries OSM if needed)
+        facility_id, facility_name = find_nearby_facility(
+            db=db,
+            latitude=request.latitude,
+            longitude=request.longitude,
+            max_distance_miles=0.3,
+            discover_if_missing=True  # Trigger OSM query for unmapped areas
+        )
 
         # Calculate follow-up question context
         context = None
