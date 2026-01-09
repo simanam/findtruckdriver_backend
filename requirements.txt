@@ -4,7 +4,7 @@ uvicorn[standard]==0.27.0
 python-multipart==0.0.6
 
 # Async Support
-asyncio==3.4.3
+# asyncio is built-in for Python 3.9+, no separate package needed
 aiohttp==3.9.1
 
 # Database
