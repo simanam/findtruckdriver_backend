@@ -24,9 +24,23 @@ class Database:
         """
         if self._client is None:
             logger.info("Initializing Supabase client...")
+
+            client_key = settings.supabase_client_key
+
+            # Validate we have a real key
+            if not client_key or client_key.startswith("sb_publishable_...") or client_key.startswith("eyJhbGc..."):
+                raise ValueError(
+                    "Invalid Supabase client key. Please set either:\n"
+                    "  - SUPABASE_PUBLISHABLE_KEY (new format: sb_publishable_...)\n"
+                    "  - SUPABASE_ANON_KEY (legacy JWT format: eyJh...)\n"
+                    "Check your .env file and Supabase Dashboard → Project Settings → API"
+                )
+
+            logger.info(f"Using client key type: {client_key[:15]}...")
+
             self._client = create_client(
                 settings.supabase_url,
-                settings.supabase_client_key  # Uses publishable or anon key
+                client_key
             )
             logger.info("✅ Supabase client initialized")
         return self._client
@@ -39,9 +53,24 @@ class Database:
         """
         if self._admin_client is None:
             logger.info("Initializing Supabase admin client...")
+
+            admin_key = settings.supabase_admin_key
+
+            # Validate we have a real key
+            if not admin_key or admin_key.startswith("sb_secret_...") or admin_key.startswith("eyJhbGc..."):
+                raise ValueError(
+                    "Invalid Supabase admin key. Please set either:\n"
+                    "  - SUPABASE_SECRET_KEY (new format: sb_secret_...)\n"
+                    "  - SUPABASE_SERVICE_ROLE_KEY (legacy JWT format: eyJh...)\n"
+                    "Check your .env file and Supabase Dashboard → Project Settings → API\n"
+                    "⚠️  NEVER expose the secret/service_role key in frontend code!"
+                )
+
+            logger.info(f"Using admin key type: {admin_key[:15]}...")
+
             self._admin_client = create_client(
                 settings.supabase_url,
-                settings.supabase_admin_key  # Uses secret or service_role key
+                admin_key
             )
             logger.info("✅ Supabase admin client initialized")
         return self._admin_client
