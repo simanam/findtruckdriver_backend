@@ -40,18 +40,22 @@ async def lifespan(app: FastAPI):
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"Debug Mode: {settings.debug}")
 
-    # TODO: Initialize database connection pool
+    # Initialize database connections
+    from app.database import initialize_database
+    await initialize_database()
+
     # TODO: Initialize Redis connection pool
-    # TODO: Initialize Supabase client
 
     yield
 
     # Shutdown
     logger.info("🛑 Shutting down Find a Truck Driver API")
 
-    # TODO: Close database connections
+    # Close database connections
+    from app.database import close_database
+    await close_database()
+
     # TODO: Close Redis connections
-    # TODO: Cleanup resources
 
 
 # Create FastAPI application
