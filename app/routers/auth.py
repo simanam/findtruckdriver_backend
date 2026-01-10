@@ -3,8 +3,10 @@ Authentication Router
 Endpoints for phone OTP, magic link, and token management
 """
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Request
 from supabase import Client
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from app.database import get_db_client
 from app.models.auth import (
     EmailOTPRequest,
@@ -24,15 +26,22 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+# Rate limiter for auth endpoints
+limiter = Limiter(key_func=get_remote_address)
+
 
 @router.post("/otp/request", status_code=status.HTTP_200_OK)
+@limiter.limit("5/hour")
 async def request_otp(
     request: OTPRequest,
+    req: Request,
     db: Client = Depends(get_db_client)
 ):
     """
     Request OTP code via SMS to phone number.
     Uses Supabase Auth phone authentication.
+
+    Rate limited: 5 requests per hour per IP.
     """
     try:
         # Supabase will send OTP via SMS
@@ -57,13 +66,17 @@ async def request_otp(
 
 
 @router.post("/otp/verify", response_model=AuthResponse)
+@limiter.limit("10/minute")
 async def verify_otp(
     request: OTPVerify,
+    req: Request,
     db: Client = Depends(get_db_client)
 ):
     """
     Verify OTP code and return access tokens.
     Creates user session if OTP is valid.
+
+    Rate limited: 10 attempts per minute per IP (prevents brute force).
     """
     try:
         # Verify OTP with Supabase
@@ -123,14 +136,18 @@ async def verify_otp(
 
 
 @router.post("/email/otp/request", status_code=status.HTTP_200_OK)
+@limiter.limit("5/hour")
 async def request_email_otp(
     request: EmailOTPRequest,
+    req: Request,
     db: Client = Depends(get_db_client)
 ):
     """
     Request OTP code via email (passwordless).
     User receives an 8-digit code in their email (configurable in Supabase).
     No password required!
+
+    Rate limited: 5 requests per hour per IP.
     """
     try:
         # Try direct API call to ensure OTP code is sent (not magic link)
@@ -160,13 +177,17 @@ async def request_email_otp(
 
 
 @router.post("/email/otp/verify", response_model=AuthResponse)
+@limiter.limit("10/minute")
 async def verify_email_otp(
     request: EmailOTPVerify,
+    req: Request,
     db: Client = Depends(get_db_client)
 ):
     """
     Verify email OTP code and return access tokens.
     Creates user session if OTP is valid.
+
+    Rate limited: 10 attempts per minute per IP (prevents brute force).
     """
     try:
         # For email OTP, we use 'email' field instead of 'phone'
@@ -227,13 +248,17 @@ async def verify_email_otp(
 
 
 @router.post("/magic-link/request", status_code=status.HTTP_200_OK)
+@limiter.limit("5/hour")
 async def request_magic_link(
     request: MagicLinkRequest,
+    req: Request,
     db: Client = Depends(get_db_client)
 ):
     """
     Request magic link via email (alternative to OTP).
     User clicks link in email instead of entering code.
+
+    Rate limited: 5 requests per hour per IP.
     """
     try:
         # Supabase will send magic link via email
