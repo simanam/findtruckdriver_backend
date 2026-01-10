@@ -33,8 +33,8 @@ limiter = Limiter(key_func=get_remote_address)
 @router.post("/otp/request", status_code=status.HTTP_200_OK)
 @limiter.limit("5/hour")
 async def request_otp(
-    request: OTPRequest,
-    req: Request,
+    request: Request,
+    otp_data: OTPRequest,
     db: Client = Depends(get_db_client)
 ):
     """
@@ -46,15 +46,15 @@ async def request_otp(
     try:
         # Supabase will send OTP via SMS
         response = db.auth.sign_in_with_otp({
-            "phone": request.phone
+            "phone": otp_data.phone
         })
 
-        logger.info(f"OTP requested for phone: {request.phone}")
+        logger.info(f"OTP requested for phone: {otp_data.phone}")
 
         return {
             "success": True,
-            "message": f"OTP sent to {request.phone}",
-            "phone": request.phone
+            "message": f"OTP sent to {otp_data.phone}",
+            "phone": otp_data.phone
         }
 
     except Exception as e:
@@ -68,8 +68,8 @@ async def request_otp(
 @router.post("/otp/verify", response_model=AuthResponse)
 @limiter.limit("10/minute")
 async def verify_otp(
-    request: OTPVerify,
-    req: Request,
+    request: Request,
+    otp_data: OTPVerify,
     db: Client = Depends(get_db_client)
 ):
     """
@@ -81,8 +81,8 @@ async def verify_otp(
     try:
         # Verify OTP with Supabase
         response = db.auth.verify_otp({
-            "phone": request.phone,
-            "token": request.code,
+            "phone": otp_data.phone,
+            "token": otp_data.code,
             "type": "sms"
         })
 
@@ -138,8 +138,8 @@ async def verify_otp(
 @router.post("/email/otp/request", status_code=status.HTTP_200_OK)
 @limiter.limit("5/hour")
 async def request_email_otp(
-    request: EmailOTPRequest,
-    req: Request,
+    request: Request,
+    email_data: EmailOTPRequest,
     db: Client = Depends(get_db_client)
 ):
     """
@@ -153,19 +153,19 @@ async def request_email_otp(
         # Try direct API call to ensure OTP code is sent (not magic link)
         # The Python SDK might not properly support the channel parameter
         response = db.auth.sign_in_with_otp({
-            "email": request.email,
+            "email": email_data.email,
             "options": {
                 "should_create_user": True,
             }
         })
 
-        logger.info(f"Email OTP requested for: {request.email}")
+        logger.info(f"Email OTP requested for: {email_data.email}")
         logger.debug(f"Supabase OTP response: {response}")
 
         return {
             "success": True,
-            "message": f"Verification code sent to {request.email}",
-            "email": request.email
+            "message": f"Verification code sent to {email_data.email}",
+            "email": email_data.email
         }
 
     except Exception as e:
@@ -179,8 +179,8 @@ async def request_email_otp(
 @router.post("/email/otp/verify", response_model=AuthResponse)
 @limiter.limit("10/minute")
 async def verify_email_otp(
-    request: EmailOTPVerify,
-    req: Request,
+    request: Request,
+    email_data: EmailOTPVerify,
     db: Client = Depends(get_db_client)
 ):
     """
@@ -191,10 +191,9 @@ async def verify_email_otp(
     """
     try:
         # For email OTP, we use 'email' field instead of 'phone'
-        # The request model has a 'phone' field, but we'll treat it as email
         response = db.auth.verify_otp({
-            "email": request.email,
-            "token": request.code,
+            "email": email_data.email,
+            "token": email_data.code,
             "type": "email"
         })
 
@@ -250,8 +249,8 @@ async def verify_email_otp(
 @router.post("/magic-link/request", status_code=status.HTTP_200_OK)
 @limiter.limit("5/hour")
 async def request_magic_link(
-    request: MagicLinkRequest,
-    req: Request,
+    request: Request,
+    link_data: MagicLinkRequest,
     db: Client = Depends(get_db_client)
 ):
     """
@@ -263,18 +262,18 @@ async def request_magic_link(
     try:
         # Supabase will send magic link via email
         response = db.auth.sign_in_with_otp({
-            "email": request.email,
+            "email": link_data.email,
             "options": {
                 "should_create_user": True
             }
         })
 
-        logger.info(f"Magic link requested for email: {request.email}")
+        logger.info(f"Magic link requested for email: {link_data.email}")
 
         return {
             "success": True,
-            "message": f"Magic link sent to {request.email}",
-            "email": request.email
+            "message": f"Magic link sent to {link_data.email}",
+            "email": link_data.email
         }
 
     except Exception as e:
