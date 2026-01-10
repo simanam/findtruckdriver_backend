@@ -270,12 +270,13 @@ async def update_my_status(
 
         prev = prev_query.data[0] if prev_query.data else None
 
-        # Use location from request, or fall back to driver_locations table
+        # Location is REQUIRED for status updates
+        # This ensures drivers appear on map and get location-based features
         current_latitude = status_update.latitude
         current_longitude = status_update.longitude
 
         if current_latitude is None or current_longitude is None:
-            # Try to get from driver_locations
+            # Try to get from driver_locations as fallback
             location_query = db.from_("driver_locations") \
                 .select("latitude, longitude") \
                 .eq("driver_id", driver["id"]) \
@@ -285,6 +286,12 @@ async def update_my_status(
             if location_query.data:
                 current_latitude = location_query.data["latitude"]
                 current_longitude = location_query.data["longitude"]
+            else:
+                # No location available - reject the request
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Location is required for status updates. Please enable location permissions and try again."
+                )
 
         # Initialize context and question
         context = None

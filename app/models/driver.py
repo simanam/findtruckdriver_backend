@@ -63,10 +63,16 @@ class DriverUpdate(BaseModel):
 
 
 class StatusUpdate(BaseModel):
-    """Model for updating driver status with optional location"""
+    """
+    Model for updating driver status with location.
+
+    Note: latitude and longitude are technically optional in the model for backwards
+    compatibility, but the API will reject requests without location data.
+    Frontend should always provide current location when updating status.
+    """
     status: str = Field(..., description="New status")
-    latitude: Optional[float] = Field(None, description="Current latitude")
-    longitude: Optional[float] = Field(None, description="Current longitude")
+    latitude: Optional[float] = Field(None, description="Current latitude (required by API)")
+    longitude: Optional[float] = Field(None, description="Current longitude (required by API)")
 
     @validator("status")
     def validate_status(cls, v):
