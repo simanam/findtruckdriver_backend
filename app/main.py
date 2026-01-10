@@ -20,13 +20,19 @@ from app.config import settings
 from app import __version__
 
 # Configure logging
+# In production (Railway), only log to stdout - no file handler
+log_handlers = [logging.StreamHandler()]
+
+# Only add file handler in development if logs directory exists
+if settings.environment.lower() != "production":
+    import os
+    if os.path.exists("logs"):
+        log_handlers.append(logging.FileHandler("logs/app.log"))
+
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("logs/app.log"),
-        logging.StreamHandler()
-    ]
+    handlers=log_handlers
 )
 
 logger = logging.getLogger(__name__)
