@@ -477,3 +477,43 @@ async def get_map_stats(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get map stats: {str(e)}"
         )
+
+
+@router.get("/weather")
+async def get_weather_at_location(
+    latitude: float = Query(..., ge=-90, le=90, description="Latitude"),
+    longitude: float = Query(..., ge=-180, le=180, description="Longitude")
+):
+    """
+    Get current weather conditions for a location.
+    
+    **No authentication required** - public endpoint for anyone to check weather.
+    
+    Perfect for displaying in the app header/stats bar:
+    "Fresno, CA: 72°F Clear ☀️"
+    
+    Returns current temperature, conditions, and city name.
+    Cached for 30 minutes to reduce API calls.
+    """
+    from app.services.weather_stats import get_current_conditions, format_conditions_detailed
+    
+    try:
+        conditions = get_current_conditions(latitude, longitude)
+        
+        if not conditions:
+            return {
+                "available": False,
+                "message": "Weather data temporarily unavailable"
+            }
+        
+        return {
+            "available": True,
+            **format_conditions_detailed(conditions)
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get weather: {e}", exc_info=True)
+        return {
+            "available": False,
+            "message": "Weather service unavailable"
+        }

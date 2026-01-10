@@ -452,7 +452,7 @@ async def update_status_with_location(
         question = None
 
         if old_status != new_status:  # Only for status changes
-            context, question = determine_follow_up(
+            context, question, weather_info = determine_follow_up(
                 prev_status=prev["status"] if prev else None,
                 prev_latitude=prev["latitude"] if prev else None,
                 prev_longitude=prev["longitude"] if prev else None,
@@ -542,6 +542,7 @@ async def update_status_with_location(
             ),
             wait_context=wait_context,
             follow_up_question=question,
+                weather_info=weather_info,
             status_update_id=status_update_id,
             message=f"Status updated to {new_status.title()}" + (
                 f" at {facility_name}" if facility_name else ""

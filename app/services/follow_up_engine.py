@@ -3,7 +3,7 @@ Follow-Up Question Engine
 Determines what question to ask based on status transition context
 """
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from datetime import datetime, timedelta
 from app.models.follow_up import (
     FollowUpQuestion,
@@ -14,9 +14,37 @@ from app.models.follow_up import (
     build_ready_to_roll_question,
     build_parking_spot_question,
     build_facility_flow_question,
-    build_drive_safe_message
+    build_drive_safe_message,
+    # First-time user questions
+    build_first_time_parked_question,
+    build_first_time_waiting_question,
+    build_first_time_rolling_message,
+    # Returning user questions
+    build_returning_user_question,
+    # Check-in questions
+    build_checkin_parked_short,
+    build_checkin_parked_long,
+    build_checkin_waiting,
+    build_checkin_rolling,
+    # WAITING → PARKED transition questions
+    build_calling_it_a_night_question,
+    build_done_at_facility_question,
+    # PARKED → WAITING transition questions
+    build_time_to_work_question,
+    # Weather questions
+    build_weather_alert_question,
+    build_weather_check_question,
+    build_weather_stay_safe_message,
+    build_weather_good_message
 )
 from app.utils.location import calculate_distance
+from app.services.weather_api import (
+    get_weather_alerts,
+    should_warn_driver,
+    get_most_severe_alert,
+    get_alert_emoji,
+    get_weather_summary
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -73,41 +101,143 @@ class FollowUpEngine:
     def get_follow_up_question(
         new_status: str,
         context: StatusContext,
-        facility_name: Optional[str] = None
+        facility_name: Optional[str] = None,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None
     ) -> Optional[FollowUpQuestion]:
         """
         Determine the right follow-up question based on context.
-        Returns None if no question is appropriate.
+        Returns the PRIMARY question (NOT weather - weather is handled separately).
 
-        Phase 1 MVP: Focus on two high-value transitions:
-        1. WAITING → ROLLING (detention tracking)
-        2. PARKED → ROLLING (parking safety/vibe)
+        Implements complete edge case decision tree:
+        1. First-time user → Welcome message
+        2. Returning user (24+ hours) → Welcome back message
+        3. Check-in (same status) → Conditional re-ask or confirmation
+        4. Status transition → Context-aware question
+
+        Note: Weather is now checked separately via get_weather_info()
         """
 
         prev_status = context.prev_status
 
-        # CASE 0: First time user or no previous context
+        # CASE 1: First time user (no previous status)
         if not prev_status:
-            logger.info(f"No previous status - skipping follow-up")
-            return None
+            logger.info(f"First-time user - showing welcome message for {new_status}")
+            return FollowUpEngine._first_time_flow(new_status, facility_name)
 
-        # CASE 1: Returning after long absence (> 24 hours)
-        if context.time_since_hours and context.time_since_hours > 24:
-            logger.info(f"Long absence ({context.time_since_hours:.1f} hours) - skipping follow-up")
-            return None
+        # CASE 2: Returning user (24+ hours away)
+        if context.time_since_hours and context.time_since_hours >= 24:
+            days_away = int(context.time_since_hours / 24)
+            logger.info(f"Returning user after {days_away} days - showing welcome back")
+            return build_returning_user_question(new_status, days_away, facility_name)
 
-        # CASE 2: Status didn't change (just a check-in)
+        # CASE 3: Check-in (same status)
         if new_status == prev_status:
-            logger.info(f"Same status - skipping follow-up")
-            return None
+            logger.info(f"Check-in for {new_status} status")
+            return FollowUpEngine._check_in_flow(new_status, context)
 
-        # CASE 3: Status changed - route to transition handler
+        # CASE 4: Status transition
         return FollowUpEngine._handle_transition(
             prev_status=prev_status,
             new_status=new_status,
             context=context,
             facility_name=facility_name
         )
+
+    @staticmethod
+    def _check_weather(
+        new_status: str,
+        latitude: float,
+        longitude: float
+    ) -> Optional[FollowUpQuestion]:
+        """
+        Check for severe weather and return appropriate question.
+
+        Safety is top priority - weather alerts override other questions.
+        """
+        try:
+            alerts = get_weather_alerts(latitude, longitude)
+
+            if not alerts:
+                return None
+
+            # Check if we should warn the driver
+            if not should_warn_driver(alerts, new_status):
+                return None
+
+            most_severe = get_most_severe_alert(alerts)
+            if not most_severe:
+                return None
+
+            emoji = get_alert_emoji(most_severe.event)
+            weather_summary = get_weather_summary(alerts)
+
+            logger.info(
+                f"Severe weather detected: {most_severe.event} "
+                f"(severity: {most_severe.severity}, urgency: {most_severe.urgency})"
+            )
+
+            # Different questions based on driver status
+            if new_status == "rolling":
+                # Driver is driving - ask if they're safe
+                return build_weather_alert_question(
+                    most_severe.event,
+                    most_severe.headline,
+                    emoji
+                )
+
+            elif new_status == "waiting":
+                # Driver is waiting - light check on conditions
+                if weather_summary:
+                    return build_weather_check_question(weather_summary)
+
+            elif new_status == "parked":
+                # Driver is parked - encourage staying safe
+                if weather_summary:
+                    return build_weather_stay_safe_message(weather_summary)
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Weather check failed: {e}", exc_info=True)
+            return None
+
+    @staticmethod
+    def _first_time_flow(new_status: str, facility_name: Optional[str]) -> FollowUpQuestion:
+        """
+        Handle first-time user based on their initial status.
+        Show welcoming message with appropriate question for their status.
+        """
+        if new_status == "parked":
+            return build_first_time_parked_question()
+        elif new_status == "waiting":
+            return build_first_time_waiting_question(facility_name)
+        else:  # rolling
+            return build_first_time_rolling_message()
+
+    @staticmethod
+    def _check_in_flow(status: str, context: StatusContext) -> Optional[FollowUpQuestion]:
+        """
+        Handle check-in (same status) based on time in status.
+        Short check-ins get quick acknowledgment, longer ones get re-asked.
+        """
+        time_in_status_hours = context.time_since_hours or 0
+
+        if status == "parked":
+            if time_in_status_hours < 2:
+                # Short time - just acknowledge location update
+                return build_checkin_parked_short()
+            else:
+                # Longer time - re-ask about spot quality (things change)
+                return build_checkin_parked_long()
+
+        elif status == "waiting":
+            # Always re-ask - facility flow changes frequently
+            return build_checkin_waiting()
+
+        else:  # rolling
+            # Just acknowledge - they're driving
+            return build_checkin_rolling()
 
     @staticmethod
     def _handle_transition(
@@ -130,15 +260,26 @@ class FollowUpEngine:
         # ASK ON ENTRY: Phone is in hand, has time
         # ========================================
 
-        # → PARKED: Ask about spot immediately
+        # → PARKED: Context-based question
         if new_status == "parked":
-            logger.info(f"Entering PARKED - asking about spot")
-            return build_parking_spot_question(facility_name)
+            # WAITING → PARKED (special context-aware handling)
+            if prev_status == "waiting":
+                return FollowUpEngine._waiting_to_parked(context, facility_name)
+            # ROLLING → PARKED (normal parking)
+            else:
+                logger.info(f"Entering PARKED - asking about spot")
+                return build_parking_spot_question(facility_name)
 
-        # → WAITING: Ask about facility flow immediately
+        # → WAITING: Context-based question
         elif new_status == "waiting":
-            logger.info(f"Entering WAITING - asking about facility flow")
-            return build_facility_flow_question(facility_name)
+            # PARKED → WAITING (woke up, ready to work)
+            if prev_status == "parked":
+                logger.info(f"PARKED → WAITING - time to work")
+                return build_time_to_work_question(facility_name)
+            # ROLLING → WAITING (normal arrival)
+            else:
+                logger.info(f"Entering WAITING - asking about facility flow")
+                return build_facility_flow_question(facility_name)
 
         # ========================================
         # MINIMAL ON ROLLING: Don't distract driver
@@ -210,6 +351,46 @@ class FollowUpEngine:
         return None
 
     @staticmethod
+    def _waiting_to_parked(
+        context: StatusContext,
+        facility_name: Optional[str]
+    ) -> Optional[FollowUpQuestion]:
+        """
+        WAITING → PARKED transition
+        Goal: Determine if driver is done for the day or still waiting
+
+        Three scenarios:
+        1. Same location (<0.5 mi) → "Calling it a night?" (might be status correction)
+        2. Nearby truck stop (<15 mi, 2+ hr wait) → Ask about detention pay
+        3. Anywhere else → Ask about parking spot
+        """
+
+        wait_seconds = context.time_since_seconds or 0
+        distance = context.distance_miles or 0
+
+        # CASE A: Same location - probably parking at facility overnight
+        if distance < 0.5:
+            logger.info(f"WAITING → PARKED same location - calling it a night?")
+            return build_calling_it_a_night_question()
+
+        # CASE B: Nearby (<15 miles) - drove to truck stop after load
+        elif distance < 15:
+            # Long wait (2+ hours) - ask about detention
+            if wait_seconds >= 7200:  # 2 hours
+                prev_facility = facility_name or "the facility"
+                logger.info(f"WAITING → PARKED nearby after {wait_seconds}s wait - detention question")
+                return build_done_at_facility_question(prev_facility, wait_seconds)
+            # Short wait - just ask about parking spot
+            else:
+                logger.info(f"WAITING → PARKED nearby after short wait - ask about spot")
+                return build_parking_spot_question(facility_name)
+
+        # CASE C: Far away - forgot to update, just ask about current spot
+        else:
+            logger.info(f"WAITING → PARKED far away ({distance:.1f}mi) - ask about spot")
+            return build_parking_spot_question(facility_name)
+
+    @staticmethod
     def _parked_to_rolling(
         context: StatusContext
     ) -> Optional[FollowUpQuestion]:
@@ -258,13 +439,17 @@ def determine_follow_up(
     new_latitude: float,
     new_longitude: float,
     facility_name: Optional[str] = None
-) -> Tuple[StatusContext, Optional[FollowUpQuestion]]:
+) -> Tuple[StatusContext, Optional[FollowUpQuestion], Optional[FollowUpQuestion]]:
     """
-    Convenience function to calculate context and determine follow-up question.
+    Convenience function to calculate context and determine follow-up questions.
+
+    NOW RETURNS TWO QUESTIONS:
+    1. Primary follow-up question (detention, parking, facility flow, etc.)
+    2. Weather information (good or bad conditions)
 
     Returns:
-        Tuple of (context, question)
-        question will be None if no follow-up is appropriate
+        Tuple of (context, primary_question, weather_question)
+        Either question can be None if not appropriate
     """
 
     engine = FollowUpEngine()
@@ -279,11 +464,89 @@ def determine_follow_up(
         new_longitude=new_longitude
     )
 
-    # Determine question
-    question = engine.get_follow_up_question(
+    # Get primary follow-up question (NOT weather)
+    primary_question = engine.get_follow_up_question(
         new_status=new_status,
         context=context,
-        facility_name=facility_name
+        facility_name=facility_name,
+        latitude=None,  # Don't check weather here anymore
+        longitude=None
     )
 
-    return context, question
+    # Get weather info separately (ALWAYS check)
+    weather_question = get_weather_info(
+        new_status=new_status,
+        latitude=new_latitude,
+        longitude=new_longitude
+    )
+
+    return context, primary_question, weather_question
+
+def get_weather_info(
+    new_status: str,
+    latitude: float,
+    longitude: float
+) -> Optional[FollowUpQuestion]:
+    """
+    Get weather ALERTS for follow-up questions.
+
+    ONLY returns a question if there's a severe weather alert that needs driver attention.
+    Does NOT return anything for good weather - that's shown in the stats bar instead.
+
+    Args:
+        new_status: Driver's new status
+        latitude: Current latitude
+        longitude: Current longitude
+
+    Returns:
+        Weather alert question, or None if no alerts or not severe enough
+    """
+    try:
+        alerts = get_weather_alerts(latitude, longitude)
+
+        # No alerts - return None (good weather shown in stats bar)
+        if not alerts:
+            logger.info("Weather: No alerts - stats bar will show current conditions")
+            return None
+
+        most_severe = get_most_severe_alert(alerts)
+        if not most_severe:
+            return None
+
+        emoji = get_alert_emoji(most_severe.event)
+        weather_summary = get_weather_summary(alerts)
+
+        logger.info(
+            f"Weather alert: {most_severe.event} "
+            f"(severity: {most_severe.severity}, urgency: {most_severe.urgency})"
+        )
+
+        # Only show alerts for Severe/Extreme weather
+        if most_severe.severity in ["Severe", "Extreme"]:
+            # Different questions based on driver status
+            if new_status == "rolling":
+                # CRITICAL: Driver is driving in severe weather
+                return build_weather_alert_question(
+                    most_severe.event,
+                    most_severe.headline,
+                    emoji
+                )
+            elif new_status == "waiting":
+                # Ask about road conditions
+                return build_weather_check_question(weather_summary)
+            else:  # parked
+                # Encourage staying safe
+                return build_weather_stay_safe_message(weather_summary)
+
+        # Moderate alerts - only warn rolling drivers
+        elif most_severe.severity == "Moderate":
+            if new_status == "rolling":
+                return build_weather_check_question(weather_summary)
+
+        # Not severe enough to warrant a follow-up question
+        logger.info(f"Weather alert not severe enough for follow-up: {most_severe.severity}")
+        return None
+
+    except Exception as e:
+        logger.error(f"Weather check failed: {e}", exc_info=True)
+        return None

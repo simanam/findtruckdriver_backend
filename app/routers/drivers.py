@@ -301,7 +301,7 @@ async def update_my_status(
             )
 
             # Determine follow-up question based on context
-            context, question = determine_follow_up(
+            context, question, weather_info = determine_follow_up(
                 prev_status=prev["status"] if prev else None,
                 prev_latitude=prev["latitude"] if prev else None,
                 prev_longitude=prev["longitude"] if prev else None,
@@ -373,6 +373,7 @@ async def update_my_status(
             prev_status=prev["status"] if prev else None,
             context=context,
             follow_up_question=question,
+            weather_info=weather_info,
             message="Status updated successfully"
         )
 

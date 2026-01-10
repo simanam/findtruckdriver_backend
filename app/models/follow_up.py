@@ -68,12 +68,13 @@ class FollowUpResponse(BaseModel):
 
 
 class StatusUpdateWithFollowUp(BaseModel):
-    """Status update response with optional follow-up question"""
+    """Status update response with optional follow-up question and weather info"""
     status_update_id: UUID
     status: str
     prev_status: Optional[str] = None
     context: Optional[StatusContext] = None
     follow_up_question: Optional[FollowUpQuestion] = None
+    weather_info: Optional[FollowUpQuestion] = Field(None, description="Weather information (good or bad)")
     message: str = Field(..., description="Success message")
 
 
@@ -249,4 +250,301 @@ def build_drive_safe_message() -> FollowUpQuestion:
         ],
         skippable=True,
         auto_dismiss_seconds=2
+    )
+
+
+# ============================================================================
+# First-Time User Welcome Questions
+# ============================================================================
+
+def build_first_time_parked_question() -> FollowUpQuestion:
+    """Welcome message for first-time user who parked"""
+    return FollowUpQuestion(
+        question_type="first_time_parked",
+        text="Welcome to Find a Truck Driver! 🚛",
+        subtext="How's the spot?",
+        options=[
+            FollowUpOption(emoji="😴", label="Solid", value="solid", description="Your input helps other drivers find safe spots"),
+            FollowUpOption(emoji="😐", label="Meh", value="meh"),
+            FollowUpOption(emoji="😬", label="Sketch", value="sketch")
+        ],
+        skippable=True
+    )
+
+
+def build_first_time_waiting_question(facility_name: Optional[str] = None) -> FollowUpQuestion:
+    """Welcome message for first-time user who's waiting"""
+    return FollowUpQuestion(
+        question_type="first_time_waiting",
+        text="Welcome to Find a Truck Driver! 🚛",
+        subtext="How's it looking?" + (f" at {facility_name}" if facility_name else ""),
+        options=[
+            FollowUpOption(emoji="🏃", label="Moving", value="moving", description="Help others know what to expect here"),
+            FollowUpOption(emoji="🐢", label="Slow", value="slow"),
+            FollowUpOption(emoji="🧊", label="Dead", value="dead"),
+            FollowUpOption(emoji="🤷", label="Just got here", value="just_arrived")
+        ],
+        skippable=True
+    )
+
+
+def build_first_time_rolling_message() -> FollowUpQuestion:
+    """Welcome message for first-time user who's rolling"""
+    return FollowUpQuestion(
+        question_type="first_time_rolling",
+        text="Welcome to Find a Truck Driver! 🚛",
+        subtext="You're on the map. Drive safe!",
+        options=[
+            FollowUpOption(emoji="👍", label="Thanks", value="acknowledged", description="Other truckers nearby can now see you rolling")
+        ],
+        skippable=True,
+        auto_dismiss_seconds=3
+    )
+
+
+# ============================================================================
+# Returning User Welcome Questions
+# ============================================================================
+
+def build_returning_user_question(
+    new_status: str,
+    days_away: int,
+    facility_name: Optional[str] = None
+) -> FollowUpQuestion:
+    """Welcome back message for returning users (24+ hours away)"""
+
+    # Greeting based on time away
+    if days_away == 1:
+        greeting = "Hey, welcome back!"
+    elif days_away < 7:
+        greeting = f"Back at it! Been {days_away} days."
+    elif days_away < 30:
+        greeting = "Good to see you again!"
+    else:
+        greeting = "Welcome back, driver!"
+
+    if new_status == "parked":
+        return FollowUpQuestion(
+            question_type="returning_parked",
+            text=greeting,
+            subtext="How's the spot?",
+            options=[
+                FollowUpOption(emoji="😴", label="Solid", value="solid"),
+                FollowUpOption(emoji="😐", label="Meh", value="meh"),
+                FollowUpOption(emoji="😬", label="Sketch", value="sketch")
+            ],
+            skippable=True
+        )
+
+    elif new_status == "waiting":
+        return FollowUpQuestion(
+            question_type="returning_waiting",
+            text=greeting,
+            subtext="How's it looking?" + (f" at {facility_name}" if facility_name else ""),
+            options=[
+                FollowUpOption(emoji="🏃", label="Moving", value="moving"),
+                FollowUpOption(emoji="🐢", label="Slow", value="slow"),
+                FollowUpOption(emoji="🧊", label="Dead", value="dead"),
+                FollowUpOption(emoji="🤷", label="Just got here", value="just_arrived")
+            ],
+            skippable=True
+        )
+
+    else:  # rolling
+        return FollowUpQuestion(
+            question_type="returning_rolling",
+            text=f"{greeting} 🚛",
+            subtext="You're on the map. Drive safe!",
+            options=[
+                FollowUpOption(emoji="👍", label="Thanks", value="acknowledged")
+            ],
+            skippable=True,
+            auto_dismiss_seconds=3
+        )
+
+
+# ============================================================================
+# Check-In Questions (Same Status)
+# ============================================================================
+
+def build_checkin_parked_short() -> FollowUpQuestion:
+    """Check-in for parked status (short time, < 2 hours)"""
+    return FollowUpQuestion(
+        question_type="checkin_parked_short",
+        text="✓ Location updated",
+        subtext=None,
+        options=[
+            FollowUpOption(emoji="👍", label="OK", value="acknowledged")
+        ],
+        skippable=True,
+        auto_dismiss_seconds=2
+    )
+
+
+def build_checkin_parked_long() -> FollowUpQuestion:
+    """Check-in for parked status (long time, 2+ hours)"""
+    return FollowUpQuestion(
+        question_type="checkin_parked_long",
+        text="Still here? Spot still good?",
+        subtext=None,
+        options=[
+            FollowUpOption(emoji="😴", label="Solid", value="solid", description="Things can change - lot gets sketchy at night"),
+            FollowUpOption(emoji="😐", label="Meh", value="meh"),
+            FollowUpOption(emoji="😬", label="Sketch", value="sketch")
+        ],
+        skippable=True
+    )
+
+
+def build_checkin_waiting() -> FollowUpQuestion:
+    """Check-in for waiting status"""
+    return FollowUpQuestion(
+        question_type="checkin_waiting",
+        text="Still waiting. How's it now?",
+        subtext=None,
+        options=[
+            FollowUpOption(emoji="🏃", label="Moving now", value="moving", description="This is valuable - facility status changes over time"),
+            FollowUpOption(emoji="🐢", label="Slow", value="slow"),
+            FollowUpOption(emoji="🧊", label="Still dead", value="dead")
+        ],
+        skippable=True
+    )
+
+
+def build_checkin_rolling() -> FollowUpQuestion:
+    """Check-in for rolling status"""
+    return FollowUpQuestion(
+        question_type="checkin_rolling",
+        text="✓ Location updated",
+        subtext=None,
+        options=[
+            FollowUpOption(emoji="👍", label="OK", value="acknowledged")
+        ],
+        skippable=True,
+        auto_dismiss_seconds=1
+    )
+
+
+# ============================================================================
+# WAITING → PARKED Transition Questions
+# ============================================================================
+
+def build_calling_it_a_night_question() -> FollowUpQuestion:
+    """WAITING → PARKED at same location - check if sleeping or still waiting"""
+    return FollowUpQuestion(
+        question_type="calling_it_a_night",
+        text="Calling it a night?",
+        subtext=None,
+        options=[
+            FollowUpOption(emoji="😴", label="Yep, done", value="sleeping"),
+            FollowUpOption(emoji="⏳", label="Still waiting", value="still_waiting")
+        ],
+        skippable=True
+    )
+
+
+def build_done_at_facility_question(facility_name: str, wait_seconds: int) -> FollowUpQuestion:
+    """WAITING → PARKED nearby - ask about detention payment"""
+    duration_str = format_duration(wait_seconds)
+    return FollowUpQuestion(
+        question_type="done_at_facility_detention",
+        text=f"Done at {facility_name}. Getting paid for the wait?",
+        subtext=f"{duration_str}",
+        options=[
+            FollowUpOption(emoji="💰", label="Yep", value="paid"),
+            FollowUpOption(emoji="😤", label="Nope", value="unpaid")
+        ],
+        skippable=True
+    )
+
+
+# ============================================================================
+# PARKED → WAITING Transition Questions
+# ============================================================================
+
+def build_time_to_work_question(facility_name: Optional[str] = None) -> FollowUpQuestion:
+    """PARKED → WAITING - driver woke up and ready to work"""
+    return FollowUpQuestion(
+        question_type="time_to_work",
+        text="Time to work! How's it looking?",
+        subtext=facility_name,
+        options=[
+            FollowUpOption(emoji="🏃", label="Moving", value="moving"),
+            FollowUpOption(emoji="🐢", label="Slow", value="slow"),
+            FollowUpOption(emoji="🧊", label="Dead", value="dead"),
+            FollowUpOption(emoji="🤷", label="Just started", value="just_arrived")
+        ],
+        skippable=True
+    )
+
+
+# ============================================================================
+# Weather-Related Questions
+# ============================================================================
+
+def build_weather_alert_question(alert_event: str, alert_headline: str, emoji: str) -> FollowUpQuestion:
+    """Severe weather alert - ask if driver is safe"""
+    return FollowUpQuestion(
+        question_type="weather_alert",
+        text=f"{emoji} {alert_event}",
+        subtext=alert_headline,
+        options=[
+            FollowUpOption(emoji="👍", label="I'm safe", value="safe"),
+            FollowUpOption(emoji="⚠️", label="Pulling over", value="stopping"),
+            FollowUpOption(emoji="🏠", label="Already parked", value="parked")
+        ],
+        skippable=True
+    )
+
+
+def build_weather_check_question(weather_summary: str) -> FollowUpQuestion:
+    """Ask driver about road conditions in bad weather"""
+    return FollowUpQuestion(
+        question_type="weather_road_conditions",
+        text="Roads okay out there?",
+        subtext=weather_summary,
+        options=[
+            FollowUpOption(emoji="👍", label="All good", value="good"),
+            FollowUpOption(emoji="😬", label="Sketchy", value="bad"),
+            FollowUpOption(emoji="⚠️", label="Dangerous", value="dangerous")
+        ],
+        skippable=True
+    )
+
+
+def build_weather_stay_safe_message(weather_summary: str) -> FollowUpQuestion:
+    """Encourage driver to stay parked during severe weather"""
+    return FollowUpQuestion(
+        question_type="weather_stay_safe",
+        text=f"Storm nearby. Stay safe!",
+        subtext=weather_summary,
+        options=[
+            FollowUpOption(emoji="👍", label="Will do", value="acknowledged")
+        ],
+        skippable=True,
+        auto_dismiss_seconds=3
+    )
+
+
+def build_weather_good_message(new_status: str) -> FollowUpQuestion:
+    """Show positive weather message when conditions are good"""
+    if new_status == "rolling":
+        text = "Clear skies ahead! ☀️"
+        subtext = "Perfect driving weather"
+    elif new_status == "waiting":
+        text = "Nice weather today! 🌤️"
+        subtext = "Good conditions"
+    else:  # parked
+        text = "Weather looking good! 🌤️"
+        subtext = "Enjoy your rest"
+
+    return FollowUpQuestion(
+        question_type="weather_good",
+        text=text,
+        subtext=subtext,
+        options=[
+            FollowUpOption(emoji="👍", label="Thanks", value="acknowledged")
+        ],
+        skippable=True,
+        auto_dismiss_seconds=3
     )
