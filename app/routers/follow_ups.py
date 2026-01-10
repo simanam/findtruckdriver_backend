@@ -66,6 +66,12 @@ async def record_follow_up_response(
                 detail="Follow-up question has already been answered"
             )
 
+        # Check for status correction ("Still waiting" on "Calling it a night?")
+        needs_status_correction = (
+            status_update.data.get("follow_up_question_type") == "calling_it_a_night" and
+            response.response_value == "still_waiting"
+        )
+
         # Update with response
         update_result = db.from_("status_updates").update({
             "follow_up_response": response.response_value,
@@ -84,6 +90,35 @@ async def record_follow_up_response(
             f"{status_update.data['follow_up_question_type']} = {response.response_value}"
         )
 
+        # Handle status correction
+        if needs_status_correction:
+            logger.info(f"Status correction: Driver {driver['id']} selected 'Still waiting' - correcting PARKED → WAITING")
+
+            # Update driver status back to WAITING
+            db.from_("drivers").update({
+                "status": "waiting",
+                "last_active": datetime.utcnow().isoformat()
+            }).eq("id", driver["id"]).execute()
+
+            # Create a new corrected status update
+            db.from_("status_updates").insert({
+                "driver_id": driver["id"],
+                "status": "waiting",
+                "prev_status": "parked",
+                "latitude": status_update.data["latitude"],
+                "longitude": status_update.data["longitude"],
+                "facility_id": status_update.data.get("facility_id"),
+                "created_at": datetime.utcnow().isoformat()
+            }).execute()
+
+            return {
+                "success": True,
+                "message": "Status corrected to WAITING",
+                "status_update_id": str(response.status_update_id),
+                "status_corrected": True,
+                "new_status": "waiting"
+            }
+
         # TODO: Phase 2 - Update facility_metrics in background job
         # For now, we're just recording the response. Later, we'll aggregate
         # these responses into facility_metrics for public display.
@@ -91,7 +126,8 @@ async def record_follow_up_response(
         return {
             "success": True,
             "message": "Response recorded successfully",
-            "status_update_id": str(response.status_update_id)
+            "status_update_id": str(response.status_update_id),
+            "status_corrected": False
         }
 
     except HTTPException:
