@@ -67,3 +67,4 @@ isort==5.13.2
 # Production Server
 gunicorn==21.2.0
 slowapi==0.1.9
+requests==2.31.0
