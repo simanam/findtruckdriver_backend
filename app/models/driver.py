@@ -106,3 +106,40 @@ class DriverWithLocation(Driver):
 
     class Config:
         from_attributes = True
+
+
+class ProfileStats(BaseModel):
+    """Driver profile statistics"""
+    total_status_updates: int = 0
+    days_active: int = 0
+    rolling_count: int = 0
+    waiting_count: int = 0
+    parked_count: int = 0
+    member_since: datetime
+    last_active: datetime
+
+
+class DriverProfileUpdate(BaseModel):
+    """Model for updating driver profile (avatar and handle only)"""
+    handle: Optional[str] = Field(None, min_length=3, max_length=30, description="Unique driver handle")
+    avatar_id: Optional[str] = Field(None, description="Avatar identifier")
+
+    @validator("handle")
+    def validate_handle(cls, v):
+        if v is not None:
+            if not v.replace("_", "").replace("-", "").isalnum():
+                raise ValueError("Handle can only contain letters, numbers, underscores, and hyphens")
+            return v.lower()
+        return v
+
+
+class AccountDeletionRequest(BaseModel):
+    """Model for account deletion confirmation"""
+    confirmation: str = Field(..., description="Must be 'DELETE' to confirm")
+    reason: Optional[str] = Field(None, max_length=500, description="Optional deletion reason")
+
+    @validator("confirmation")
+    def validate_confirmation(cls, v):
+        if v != "DELETE":
+            raise ValueError("Confirmation must be 'DELETE' to proceed with account deletion")
+        return v

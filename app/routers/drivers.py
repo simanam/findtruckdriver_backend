@@ -15,7 +15,10 @@ from app.models.driver import (
     DriverUpdate,
     Driver,
     DriverPublic,
-    StatusUpdate
+    StatusUpdate,
+    ProfileStats,
+    DriverProfileUpdate,
+    AccountDeletionRequest
 )
 from app.models.follow_up import StatusUpdateWithFollowUp
 from app.services.follow_up_engine import determine_follow_up
@@ -384,4 +387,192 @@ async def update_my_status(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update status: {str(e)}"
+        )
+
+
+@router.get("/me/stats", response_model=ProfileStats)
+async def get_my_stats(
+    driver: dict = Depends(get_current_driver),
+    db: Client = Depends(get_db_admin)
+):
+    """
+    Get current driver's profile statistics.
+    Returns total status updates, days active, breakdown by status, etc.
+    """
+    try:
+        # Get total status updates count
+        updates_response = db.from_("status_updates") \
+            .select("id", count="exact") \
+            .eq("driver_id", driver["id"]) \
+            .execute()
+
+        total_updates = updates_response.count or 0
+
+        # Get status breakdown
+        status_breakdown = db.from_("status_updates") \
+            .select("status") \
+            .eq("driver_id", driver["id"]) \
+            .execute()
+
+        rolling_count = sum(1 for s in status_breakdown.data if s["status"] == "rolling")
+        waiting_count = sum(1 for s in status_breakdown.data if s["status"] == "waiting")
+        parked_count = sum(1 for s in status_breakdown.data if s["status"] == "parked")
+
+        # Calculate days active (days since account creation)
+        created_at = parse_timestamp(driver["created_at"])
+        days_active = (datetime.utcnow() - created_at).days
+
+        last_active = parse_timestamp(driver["last_active"])
+
+        return ProfileStats(
+            total_status_updates=total_updates,
+            days_active=days_active,
+            rolling_count=rolling_count,
+            waiting_count=waiting_count,
+            parked_count=parked_count,
+            member_since=created_at,
+            last_active=last_active
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to fetch driver stats: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch stats"
+        )
+
+
+@router.patch("/me/profile", response_model=Driver)
+async def update_my_profile_info(
+    updates: DriverProfileUpdate,
+    driver: dict = Depends(get_current_driver),
+    db: Client = Depends(get_db_admin)
+):
+    """
+    Update driver profile information (handle and avatar only).
+    Status updates should use POST /me/status endpoint.
+    """
+    try:
+        # Build update dict from provided fields only
+        update_dict = {}
+
+        # Handle update with uniqueness check
+        if updates.handle is not None:
+            if updates.handle != driver["handle"]:
+                # Check if new handle is unique
+                handle_check = db.from_("drivers").select("id").eq(
+                    "handle", updates.handle
+                ).execute()
+
+                if handle_check.data:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Handle '{updates.handle}' is already taken"
+                    )
+
+            update_dict["handle"] = updates.handle
+
+        # Avatar update (no validation needed)
+        if updates.avatar_id is not None:
+            update_dict["avatar_id"] = updates.avatar_id
+
+        # Return current profile if no changes
+        if not update_dict:
+            return driver
+
+        # Update profile
+        response = db.from_("drivers").update(update_dict).eq(
+            "id", driver["id"]
+        ).execute()
+
+        if not response.data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update profile"
+            )
+
+        logger.info(f"Driver profile updated: {driver['id']} - {list(update_dict.keys())}")
+
+        return response.data[0]
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update driver profile: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update profile: {str(e)}"
+        )
+
+
+@router.delete("/me", status_code=status.HTTP_200_OK)
+async def delete_my_account(
+    deletion_request: AccountDeletionRequest,
+    driver: dict = Depends(get_current_driver),
+    current_user: dict = Depends(get_current_user),
+    db: Client = Depends(get_db_admin)
+):
+    """
+    Delete driver account and all associated data.
+
+    This is a destructive operation that:
+    1. Deletes driver profile
+    2. Deletes all status updates
+    3. Deletes location data
+    4. Deletes authentication account (via Supabase Auth)
+
+    Requires confirmation field to be "DELETE".
+    """
+    try:
+        driver_id = driver["id"]
+        user_id = str(current_user.id)
+
+        logger.warning(
+            f"Account deletion initiated for driver {driver_id} (user {user_id}). "
+            f"Reason: {deletion_request.reason or 'Not provided'}"
+        )
+
+        # Step 1: Delete status updates (cascade will handle follow-up responses)
+        db.from_("status_updates").delete().eq("driver_id", driver_id).execute()
+        logger.info(f"Deleted status updates for driver {driver_id}")
+
+        # Step 2: Delete location data
+        db.from_("driver_locations").delete().eq("driver_id", driver_id).execute()
+        logger.info(f"Deleted location data for driver {driver_id}")
+
+        # Step 3: Delete driver profile
+        db.from_("drivers").delete().eq("id", driver_id).execute()
+        logger.info(f"Deleted driver profile {driver_id}")
+
+        # Step 4: Delete authentication account (Supabase Auth)
+        try:
+            # Sign out current session first
+            db.auth.sign_out()
+
+            # Delete user from Supabase Auth
+            # Note: This requires admin privileges
+            from app.database import get_db_client
+            admin_db = get_db_client()
+            admin_db.auth.admin.delete_user(user_id)
+            logger.info(f"Deleted auth account for user {user_id}")
+        except Exception as auth_error:
+            logger.error(f"Failed to delete auth account: {auth_error}")
+            # Continue anyway - driver data is already deleted
+            # Frontend should handle by clearing local tokens
+
+        logger.warning(f"Account deletion completed for driver {driver_id}")
+
+        return {
+            "success": True,
+            "message": "Account successfully deleted",
+            "deleted_at": datetime.utcnow().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Account deletion failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete account: {str(e)}"
         )
