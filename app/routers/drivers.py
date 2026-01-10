@@ -420,7 +420,9 @@ async def get_my_stats(
 
         # Calculate days active (days since account creation)
         created_at = parse_timestamp(driver["created_at"])
-        days_active = (datetime.utcnow() - created_at).days
+        # Make utcnow() timezone-aware to match parsed timestamps
+        now_utc = datetime.utcnow().replace(tzinfo=created_at.tzinfo) if created_at.tzinfo else datetime.utcnow()
+        days_active = (now_utc - created_at).days
 
         last_active = parse_timestamp(driver["last_active"])
 
