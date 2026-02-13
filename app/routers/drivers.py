@@ -3,7 +3,7 @@ Driver Router
 Endpoints for driver profile management
 """
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Query
 from supabase import Client
 from typing import List, Optional
 from uuid import UUID
@@ -248,6 +248,71 @@ async def update_my_profile(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update profile: {str(e)}"
+        )
+
+
+@router.get("/seekers")
+async def list_job_seekers(
+    cdl_class: Optional[str] = Query(None),
+    equipment: Optional[str] = Query(None),
+    region: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Client = Depends(get_db_admin)
+):
+    """
+    List drivers who are open to work and visible on the job board.
+    Public endpoint for recruiters/companies to discover drivers.
+    Respects privacy settings from professional_profiles.
+    """
+    try:
+        query = db.from_("professional_profiles") \
+            .select(
+                "driver_id, cdl_class, endorsements, "
+                "equipment_type, years_experience, "
+                "preferred_haul, haul_type, "
+                "drivers!inner(id, handle, cb_handle, role, avatar_id)",
+                count="exact"
+            ) \
+            .eq("open_to_work", True) \
+            .eq("is_public", True)
+
+        if cdl_class:
+            query = query.eq("cdl_class", cdl_class)
+        if equipment:
+            query = query.eq("equipment_type", equipment)
+        if region:
+            query = query.contains("preferred_haul", [region])
+
+        query = query.order("updated_at", desc=True) \
+            .range(offset, offset + limit - 1)
+
+        response = query.execute()
+
+        seekers = []
+        for row in (response.data or []):
+            driver_data = row.get("drivers", {})
+            seekers.append({
+                "driver_id": row["driver_id"],
+                "handle": driver_data.get("handle"),
+                "cb_handle": driver_data.get("cb_handle"),
+                "role": driver_data.get("role"),
+                "avatar_id": driver_data.get("avatar_id"),
+                "cdl_class": row.get("cdl_class"),
+                "endorsements": row.get("endorsements", []),
+                "equipment_type": row.get("equipment_type"),
+                "years_experience": row.get("years_experience"),
+                "preferred_haul": row.get("preferred_haul", []),
+                "haul_type": row.get("haul_type"),
+            })
+
+        return seekers
+
+    except Exception as e:
+        logger.error(f"Failed to list job seekers: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list job seekers"
         )
 
 

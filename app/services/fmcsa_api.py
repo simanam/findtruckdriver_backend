@@ -38,41 +38,59 @@ class FMCSACarrier:
 _fmcsa_cache: Dict[str, tuple] = {}
 
 
-def _parse_carrier(content: dict) -> Optional[FMCSACarrier]:
+def _safe_int(val) -> Optional[int]:
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_mc_from_dockets(docket_numbers) -> Optional[str]:
+    """Extract MC number from docketNumbers array."""
+    if not isinstance(docket_numbers, list):
+        return None
+    for d in docket_numbers:
+        if isinstance(d, dict):
+            prefix = d.get("prefix", "")
+            number = d.get("docketNumber", "")
+            if prefix == "MC" and number:
+                return f"MC-{number}"
+    return None
+
+
+def _fetch_mc_number(dot_number: str, web_key: str) -> Optional[str]:
+    """Fetch MC number via separate docket-numbers endpoint."""
+    try:
+        url = f"{FMCSA_API_BASE}/carriers/{dot_number}/docket-numbers"
+        params = {"webKey": web_key}
+        response = requests.get(url, params=params, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            content = data.get("content", [])
+            if isinstance(content, list):
+                return _extract_mc_from_dockets(content)
+            elif isinstance(content, dict):
+                return _extract_mc_from_dockets([content])
+    except Exception as e:
+        logger.debug(f"Failed to fetch MC number for DOT {dot_number}: {e}")
+    return None
+
+
+def _parse_carrier(content: dict, mc_number: Optional[str] = None) -> Optional[FMCSACarrier]:
     """Parse a carrier record from FMCSA API response."""
     try:
         carrier = content.get("carrier", {})
         if not carrier:
             return None
 
-        # MC number is sometimes in docket numbers
-        mc_number = None
-        docket_numbers = content.get("docketNumbers", [])
-        if isinstance(docket_numbers, list):
-            for d in docket_numbers:
-                prefix = d.get("prefix", "")
-                number = d.get("docketNumber", "")
-                if prefix == "MC" and number:
-                    mc_number = f"MC-{number}"
-                    break
+        # Try to get MC from docketNumbers in this response
+        if not mc_number:
+            docket_numbers = content.get("docketNumbers", [])
+            mc_number = _extract_mc_from_dockets(docket_numbers)
 
-        # Build address from parts
-        address_parts = [
-            carrier.get("phyStreet"),
-        ]
-        address = ", ".join(p for p in address_parts if p) or None
-
-        # Parse power_units and drivers safely
-        power_units = carrier.get("totalPowerUnits")
-        drivers_count = carrier.get("totalDrivers")
-        try:
-            power_units = int(power_units) if power_units else None
-        except (ValueError, TypeError):
-            power_units = None
-        try:
-            drivers_count = int(drivers_count) if drivers_count else None
-        except (ValueError, TypeError):
-            drivers_count = None
+        address = carrier.get("phyStreet") or None
 
         return FMCSACarrier(
             legal_name=carrier.get("legalName", "Unknown"),
@@ -84,8 +102,8 @@ def _parse_carrier(content: dict) -> Optional[FMCSACarrier]:
             state=carrier.get("phyState") or None,
             zip_code=carrier.get("phyZipcode") or None,
             phone=carrier.get("telephone") or None,
-            power_units=power_units,
-            drivers=drivers_count,
+            power_units=_safe_int(carrier.get("totalPowerUnits")),
+            drivers=_safe_int(carrier.get("totalDrivers")),
         )
     except Exception as e:
         logger.warning(f"Failed to parse FMCSA carrier record: {e}")
@@ -95,13 +113,7 @@ def _parse_carrier(content: dict) -> Optional[FMCSACarrier]:
 def search_by_dot(dot_number: str, web_key: str) -> Optional[FMCSACarrier]:
     """
     Look up a carrier by DOT number.
-
-    Args:
-        dot_number: The USDOT number to search for
-        web_key: FMCSA API WebKey
-
-    Returns:
-        FMCSACarrier or None if not found
+    Also fetches MC number via separate docket-numbers endpoint.
     """
     cache_key = f"dot:{dot_number}"
     if cache_key in _fmcsa_cache:
@@ -122,7 +134,10 @@ def search_by_dot(dot_number: str, web_key: str) -> Optional[FMCSACarrier]:
         data = response.json()
         content = data.get("content", {})
 
-        carrier = _parse_carrier(content)
+        # Fetch MC number from separate endpoint
+        mc_number = _fetch_mc_number(dot_number, web_key)
+
+        carrier = _parse_carrier(content, mc_number=mc_number)
         _fmcsa_cache[cache_key] = (datetime.utcnow(), carrier)
         return carrier
 
@@ -140,14 +155,6 @@ def search_by_dot(dot_number: str, web_key: str) -> Optional[FMCSACarrier]:
 def search_by_name(name: str, web_key: str, limit: int = 10) -> List[FMCSACarrier]:
     """
     Search carriers by company name.
-
-    Args:
-        name: Company name to search for
-        web_key: FMCSA API WebKey
-        limit: Max results to return
-
-    Returns:
-        List of matching FMCSACarrier records
     """
     cache_key = f"name:{name.lower().strip()}:{limit}"
     if cache_key in _fmcsa_cache:
