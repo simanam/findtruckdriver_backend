@@ -18,13 +18,16 @@ from app.models.driver import (
     StatusUpdate,
     ProfileStats,
     DriverProfileUpdate,
-    AccountDeletionRequest
+    AccountDeletionRequest,
+    CBHandleCheck,
+    VALID_ROLES
 )
 from app.models.follow_up import StatusUpdateWithFollowUp
 from app.services.follow_up_engine import determine_follow_up
 from app.services.facility_discovery import find_nearby_facility
 from app.utils.location import calculate_distance
 from app.dependencies import get_current_user, get_current_driver
+from app.services.cb_handle_generator import generate_cb_handle, generate_cb_handle_suggestions
 import logging
 
 logger = logging.getLogger(__name__)
@@ -90,6 +93,23 @@ async def create_driver_profile(
                 detail=f"Handle '{driver_data.handle}' is already taken"
             )
 
+        # Auto-generate CB handle if not provided
+        if not driver_data.cb_handle:
+            # Get existing CB handles to avoid collisions
+            existing_response = db.from_("drivers").select("cb_handle").not_.is_("cb_handle", "null").execute()
+            existing_handles = {d["cb_handle"] for d in existing_response.data} if existing_response.data else set()
+            driver_data.cb_handle = generate_cb_handle(existing_handles)
+        else:
+            # Check CB handle uniqueness if user provided one
+            cb_check = db.from_("drivers").select("id").eq(
+                "cb_handle", driver_data.cb_handle
+            ).execute()
+            if cb_check.data:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"CB Handle '{driver_data.cb_handle}' is already taken"
+                )
+
         # Create driver profile - add user_id from authenticated user
         driver_dict = driver_data.model_dump()
         driver_dict["user_id"] = str(current_user.id)  # Convert to string for Supabase
@@ -124,6 +144,62 @@ async def get_my_profile(
     Get current driver's full profile.
     """
     return driver
+
+
+@router.get("/cb-handle/suggestions")
+async def get_cb_handle_suggestions(
+    current_user: dict = Depends(get_current_user),
+    db: Client = Depends(get_db_admin)
+):
+    """
+    Get CB Handle suggestions for the current user.
+    Returns 5 unique, trucker-themed handle suggestions.
+    """
+    try:
+        # Get existing CB handles to avoid collisions
+        existing_response = db.from_("drivers").select("cb_handle").not_.is_("cb_handle", "null").execute()
+        existing_handles = {d["cb_handle"] for d in existing_response.data} if existing_response.data else set()
+
+        suggestions = generate_cb_handle_suggestions(count=5, existing_handles=existing_handles)
+
+        return {"suggestions": suggestions}
+
+    except Exception as e:
+        logger.error(f"Failed to generate CB handle suggestions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate suggestions"
+        )
+
+
+@router.post("/cb-handle/check")
+async def check_cb_handle_availability(
+    check_data: CBHandleCheck,
+    current_user: dict = Depends(get_current_user),
+    db: Client = Depends(get_db_admin)
+):
+    """
+    Check if a CB Handle is available.
+    Returns whether the handle is already taken.
+    """
+    try:
+        result = db.from_("drivers").select("id").eq(
+            "cb_handle", check_data.cb_handle
+        ).execute()
+
+        available = not result.data
+
+        return {
+            "cb_handle": check_data.cb_handle,
+            "available": available
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to check CB handle availability: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check handle availability"
+        )
 
 
 @router.put("/me", response_model=Driver)
@@ -458,7 +534,8 @@ async def update_my_profile_info(
     db: Client = Depends(get_db_admin)
 ):
     """
-    Update driver profile information (handle and avatar only).
+    Update driver profile information.
+    Supports: handle, avatar_id, role, cb_handle, show_on_map_as, profile_photo_url.
     Status updates should use POST /me/status endpoint.
     """
     try:
@@ -484,6 +561,34 @@ async def update_my_profile_info(
         # Avatar update (no validation needed)
         if updates.avatar_id is not None:
             update_dict["avatar_id"] = updates.avatar_id
+
+        # Role update (validated by model)
+        if updates.role is not None:
+            update_dict["role"] = updates.role
+
+        # CB Handle update with uniqueness check
+        if updates.cb_handle is not None:
+            current_cb = driver.get("cb_handle")
+            if updates.cb_handle != current_cb:
+                cb_check = db.from_("drivers").select("id").eq(
+                    "cb_handle", updates.cb_handle
+                ).execute()
+
+                if cb_check.data:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"CB Handle '{updates.cb_handle}' is already taken"
+                    )
+
+            update_dict["cb_handle"] = updates.cb_handle
+
+        # Show on map as update (validated by model)
+        if updates.show_on_map_as is not None:
+            update_dict["show_on_map_as"] = updates.show_on_map_as
+
+        # Profile photo URL update
+        if updates.profile_photo_url is not None:
+            update_dict["profile_photo_url"] = updates.profile_photo_url
 
         # Return current profile if no changes
         if not update_dict:

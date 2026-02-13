@@ -96,3 +96,42 @@ class AuthResponse(BaseModel):
     user: AuthUser
     tokens: TokenResponse
     driver: Optional[dict] = Field(None, description="Driver profile if exists")
+
+
+class SignupRequest(BaseModel):
+    """Email + password signup"""
+    email: EmailStr = Field(..., description="Email address")
+    password: str = Field(..., min_length=8, max_length=128, description="Password")
+
+    @validator("password")
+    def validate_password(cls, v):
+        if not any(c.isalpha() for c in v):
+            raise ValueError("Password must contain at least one letter")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one number")
+        return v
+
+
+class LoginRequest(BaseModel):
+    """Email + password login"""
+    email: EmailStr = Field(..., description="Email address")
+    password: str = Field(..., description="Password")
+
+
+class PasswordResetRequest(BaseModel):
+    """Request password reset email"""
+    email: EmailStr = Field(..., description="Email address")
+
+
+class PasswordResetConfirm(BaseModel):
+    """Confirm password reset with new password"""
+    access_token: str = Field(..., description="Access token from reset email")
+    new_password: str = Field(..., min_length=8, max_length=128, description="New password")
+
+    @validator("new_password")
+    def validate_password(cls, v):
+        if not any(c.isalpha() for c in v):
+            raise ValueError("Password must contain at least one letter")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one number")
+        return v

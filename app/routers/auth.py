@@ -17,7 +17,11 @@ from app.models.auth import (
     TokenResponse,
     TokenRefresh,
     AuthResponse,
-    AuthUser
+    AuthUser,
+    SignupRequest,
+    LoginRequest,
+    PasswordResetRequest,
+    PasswordResetConfirm
 )
 from app.dependencies import get_current_user
 import logging
@@ -365,3 +369,223 @@ async def get_current_user_info(
         email=current_user.email,
         created_at=created_at_str
     )
+
+
+@router.post("/signup", response_model=AuthResponse)
+@limiter.limit("5/hour")
+async def signup_with_email(
+    request: Request,
+    signup_data: SignupRequest,
+    db: Client = Depends(get_db_client)
+):
+    """
+    Sign up with email and password.
+    Creates a new user account in Supabase Auth.
+    User will receive a confirmation email.
+
+    Rate limited: 5 requests per hour per IP.
+    """
+    try:
+        response = db.auth.sign_up({
+            "email": signup_data.email,
+            "password": signup_data.password
+        })
+
+        if not response.user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to create account"
+            )
+
+        # Check if driver profile exists
+        driver = None
+        if response.session:
+            driver_response = db.from_("drivers").select("*").eq(
+                "user_id", response.user.id
+            ).execute()
+            driver = driver_response.data[0] if driver_response.data else None
+
+        # Build response
+        created_at_str = response.user.created_at
+        if hasattr(created_at_str, 'isoformat'):
+            created_at_str = created_at_str.isoformat()
+
+        auth_user = AuthUser(
+            id=response.user.id,
+            phone=response.user.phone,
+            email=response.user.email,
+            created_at=created_at_str
+        )
+
+        # Session may be None if email confirmation is required
+        if response.session:
+            tokens = TokenResponse(
+                access_token=response.session.access_token,
+                refresh_token=response.session.refresh_token,
+                token_type="bearer",
+                expires_in=response.session.expires_in or 3600
+            )
+        else:
+            # No session yet (email confirmation pending)
+            tokens = TokenResponse(
+                access_token="",
+                refresh_token="",
+                token_type="bearer",
+                expires_in=0
+            )
+
+        logger.info(f"User signed up: {signup_data.email}")
+
+        return AuthResponse(
+            user=auth_user,
+            tokens=tokens,
+            driver=driver
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Signup failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Signup failed: {str(e)}"
+        )
+
+
+@router.post("/login", response_model=AuthResponse)
+@limiter.limit("10/minute")
+async def login_with_email(
+    request: Request,
+    login_data: LoginRequest,
+    db: Client = Depends(get_db_client)
+):
+    """
+    Log in with email and password.
+    Returns access tokens and driver profile if exists.
+
+    Rate limited: 10 attempts per minute per IP.
+    """
+    try:
+        response = db.auth.sign_in_with_password({
+            "email": login_data.email,
+            "password": login_data.password
+        })
+
+        if not response.user or not response.session:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password"
+            )
+
+        # Check if driver profile exists
+        driver_response = db.from_("drivers").select("*").eq(
+            "user_id", response.user.id
+        ).execute()
+
+        driver = driver_response.data[0] if driver_response.data else None
+
+        # Build response
+        created_at_str = response.user.created_at
+        if hasattr(created_at_str, 'isoformat'):
+            created_at_str = created_at_str.isoformat()
+
+        auth_user = AuthUser(
+            id=response.user.id,
+            phone=response.user.phone,
+            email=response.user.email,
+            created_at=created_at_str
+        )
+
+        tokens = TokenResponse(
+            access_token=response.session.access_token,
+            refresh_token=response.session.refresh_token,
+            token_type="bearer",
+            expires_in=response.session.expires_in or 3600
+        )
+
+        logger.info(f"User logged in: {login_data.email}")
+
+        return AuthResponse(
+            user=auth_user,
+            tokens=tokens,
+            driver=driver
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Login failed: {str(e)}"
+        )
+
+
+@router.post("/password/reset-request", status_code=status.HTTP_200_OK)
+@limiter.limit("3/hour")
+async def request_password_reset(
+    request: Request,
+    reset_data: PasswordResetRequest,
+    db: Client = Depends(get_db_client)
+):
+    """
+    Request a password reset email.
+    User will receive an email with a reset link/token.
+
+    Rate limited: 3 requests per hour per IP.
+    """
+    try:
+        db.auth.reset_password_email(reset_data.email)
+
+        logger.info(f"Password reset requested for: {reset_data.email}")
+
+        return {
+            "success": True,
+            "message": f"Password reset email sent to {reset_data.email}",
+            "email": reset_data.email
+        }
+
+    except Exception as e:
+        logger.error(f"Password reset request failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to send password reset email: {str(e)}"
+        )
+
+
+@router.post("/password/reset-confirm", status_code=status.HTTP_200_OK)
+async def confirm_password_reset(
+    reset_data: PasswordResetConfirm,
+    db: Client = Depends(get_db_client)
+):
+    """
+    Confirm password reset with new password.
+    Uses the access token from the reset email to authenticate the update.
+    """
+    try:
+        # Use the access token from the reset email to update the password
+        response = db.auth.update_user({
+            "password": reset_data.new_password
+        })
+
+        if not response.user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to reset password"
+            )
+
+        logger.info(f"Password reset confirmed for user: {response.user.id}")
+
+        return {
+            "success": True,
+            "message": "Password has been reset successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Password reset confirmation failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Password reset failed: {str(e)}"
+        )

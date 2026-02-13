@@ -4,9 +4,15 @@ Pydantic models for driver data validation and serialization
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 from pydantic import BaseModel, Field, validator
+
+VALID_ROLES = [
+    "company_driver", "owner_operator", "team_driver", "lease_operator",
+    "student_driver", "dispatcher", "freight_broker", "mechanic",
+    "fleet_manager", "lumper", "warehouse", "shipper", "other"
+]
 
 
 class DriverStatus:
@@ -41,7 +47,14 @@ class DriverBase(BaseModel):
 
 class DriverCreateRequest(DriverBase):
     """Model for driver creation request from frontend (no user_id)"""
-    pass
+    role: str = Field(default="company_driver", description="Industry role")
+    cb_handle: Optional[str] = Field(None, max_length=50, description="CB Handle for map display")
+
+    @validator("role")
+    def validate_role(cls, v):
+        if v not in VALID_ROLES:
+            raise ValueError(f"Role must be one of: {', '.join(VALID_ROLES)}")
+        return v
 
 
 class DriverCreate(DriverBase):
@@ -85,6 +98,10 @@ class Driver(DriverBase):
     """Complete driver model"""
     id: UUID
     user_id: UUID
+    role: Optional[str] = None
+    cb_handle: Optional[str] = None
+    show_on_map_as: Optional[str] = None
+    profile_photo_url: Optional[str] = None
     last_active: datetime
     created_at: datetime
 
@@ -98,6 +115,10 @@ class DriverPublic(BaseModel):
     handle: str
     avatar_id: str
     status: str
+    role: Optional[str] = None
+    cb_handle: Optional[str] = None
+    show_on_map_as: Optional[str] = None
+    profile_photo_url: Optional[str] = None
     last_active: datetime
 
     class Config:
@@ -126,9 +147,13 @@ class ProfileStats(BaseModel):
 
 
 class DriverProfileUpdate(BaseModel):
-    """Model for updating driver profile (avatar and handle only)"""
+    """Model for updating driver profile"""
     handle: Optional[str] = Field(None, min_length=3, max_length=30, description="Unique driver handle")
     avatar_id: Optional[str] = Field(None, description="Avatar identifier")
+    role: Optional[str] = Field(None, description="Industry role")
+    cb_handle: Optional[str] = Field(None, max_length=50, description="CB Handle for map display")
+    show_on_map_as: Optional[str] = Field(None, description="What name to show on map")
+    profile_photo_url: Optional[str] = Field(None, description="Profile photo URL")
 
     @validator("handle")
     def validate_handle(cls, v):
@@ -137,6 +162,23 @@ class DriverProfileUpdate(BaseModel):
                 raise ValueError("Handle can only contain letters, numbers, underscores, and hyphens")
             return v.lower()
         return v
+
+    @validator("role")
+    def validate_role(cls, v):
+        if v is not None and v not in VALID_ROLES:
+            raise ValueError(f"Role must be one of: {', '.join(VALID_ROLES)}")
+        return v
+
+    @validator("show_on_map_as")
+    def validate_show_on_map_as(cls, v):
+        if v is not None and v not in ("cb_handle", "handle"):
+            raise ValueError("show_on_map_as must be 'cb_handle' or 'handle'")
+        return v
+
+
+class CBHandleCheck(BaseModel):
+    """Model for checking CB handle availability"""
+    cb_handle: str = Field(..., min_length=3, max_length=50, description="CB Handle to check")
 
 
 class AccountDeletionRequest(BaseModel):

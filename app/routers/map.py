@@ -54,9 +54,9 @@ async def get_drivers_in_area(
         # Get all active drivers (not stale)
         cutoff_time = (datetime.utcnow() - timedelta(hours=12)).isoformat()
 
-        # Query locations with driver info
+        # Query locations with driver info (including CB handle and display preference)
         query = db.from_("driver_locations") \
-            .select("*, drivers!inner(id, handle, status, last_active)") \
+            .select("*, drivers!inner(id, handle, status, last_active, cb_handle, show_on_map_as)") \
             .gte("recorded_at", cutoff_time)
 
         locations_response = query.execute()
@@ -107,9 +107,20 @@ async def get_drivers_in_area(
                     in_area = True
 
             if in_area:
+                # Determine display name based on driver preference
+                show_as = driver.get("show_on_map_as", "cb_handle")
+                if show_as == "cb_handle" and driver.get("cb_handle"):
+                    display_name = driver["cb_handle"]
+                elif show_as == "handle":
+                    display_name = driver["handle"]
+                else:
+                    # Fallback to handle
+                    display_name = driver.get("cb_handle") or driver["handle"]
+
                 drivers_in_area.append({
                     "driver_id": driver["id"],
                     "handle": driver["handle"],
+                    "display_name": display_name,
                     "status": driver["status"],
                     "latitude": driver_lat,
                     "longitude": driver_lng,

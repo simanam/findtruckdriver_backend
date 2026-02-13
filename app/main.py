@@ -179,13 +179,20 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             }
         )
 
+    # Sanitize errors: convert non-serializable objects (like ValueError) to strings
+    sanitized_errors = []
+    for err in exc.errors():
+        clean_err = {k: (str(v) if k == "ctx" else v) for k, v in err.items() if k != "ctx"}
+        clean_err["msg"] = err.get("msg", "Validation error")
+        sanitized_errors.append(clean_err)
+
     return JSONResponse(
         status_code=400,
         content={
             "error": {
                 "code": "VALIDATION_ERROR",
                 "message": "Input validation failed",
-                "details": exc.errors(),
+                "details": sanitized_errors,
                 "timestamp": time.time()
             }
         }
@@ -248,13 +255,14 @@ async def root() -> Dict:
 
 
 # API v1 routes
-from app.routers import auth, drivers, locations, map, follow_ups
+from app.routers import auth, drivers, locations, map, follow_ups, professional_profile
 
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(drivers.router, prefix="/api/v1")
 app.include_router(locations.router, prefix="/api/v1")
 app.include_router(map.router, prefix="/api/v1")
 app.include_router(follow_ups.router, prefix="/api/v1")
+app.include_router(professional_profile.router, prefix="/api/v1")
 
 
 # Run with: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000

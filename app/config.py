@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     # Note: JWT and OTP settings are managed by Supabase Auth
     # Supabase handles token generation, validation, expiry, and OTP sending
 
+    # FMCSA API
+    fmcsa_web_key: str = Field(default="", alias="FMCSA_WEB_KEY")
+
     # SMS Provider (Twilio - optional)
     twilio_account_sid: str = Field(default="", alias="TWILIO_ACCOUNT_SID")
     twilio_auth_token: str = Field(default="", alias="TWILIO_AUTH_TOKEN")
