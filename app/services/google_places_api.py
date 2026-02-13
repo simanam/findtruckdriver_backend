@@ -28,6 +28,8 @@ class GooglePlaceData:
     city: Optional[str] = None
     state: Optional[str] = None
     zip_code: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     phone: Optional[str] = None
     website: Optional[str] = None
     rating: Optional[float] = None
@@ -74,6 +76,7 @@ def _parse_address_components(components: list) -> dict:
 def _parse_place(place: dict) -> GooglePlaceData:
     """Parse a Google Places API response into our dataclass."""
     addr = _parse_address_components(place.get("addressComponents", []))
+    location = place.get("location", {})
 
     return GooglePlaceData(
         place_id=place.get("id"),
@@ -82,6 +85,8 @@ def _parse_place(place: dict) -> GooglePlaceData:
         city=addr["city"],
         state=addr["state"],
         zip_code=addr["zip_code"],
+        latitude=location.get("latitude"),
+        longitude=location.get("longitude"),
         phone=place.get("internationalPhoneNumber"),
         website=place.get("websiteUri"),
         rating=place.get("rating"),
@@ -115,7 +120,7 @@ def search_places(query: str, api_key: str, location: Optional[str] = None, limi
         headers = {
             "Content-Type": "application/json",
             "X-Goog-Api-Key": api_key,
-            "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.addressComponents,places.internationalPhoneNumber,places.websiteUri,places.rating,places.userRatingCount,places.types,places.businessStatus",
+            "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.addressComponents,places.location,places.internationalPhoneNumber,places.websiteUri,places.rating,places.userRatingCount,places.types,places.businessStatus",
         }
 
         body = {
@@ -160,7 +165,7 @@ def get_place_details(place_id: str, api_key: str) -> Optional[GooglePlaceData]:
         url = f"https://places.googleapis.com/v1/places/{place_id}"
         headers = {
             "X-Goog-Api-Key": api_key,
-            "X-Goog-FieldMask": "id,displayName,formattedAddress,addressComponents,internationalPhoneNumber,websiteUri,rating,userRatingCount,types,businessStatus",
+            "X-Goog-FieldMask": "id,displayName,formattedAddress,addressComponents,location,internationalPhoneNumber,websiteUri,rating,userRatingCount,types,businessStatus",
         }
 
         response = requests.get(url, headers=headers, timeout=10)

@@ -255,7 +255,7 @@ async def root() -> Dict:
 
 
 # API v1 routes
-from app.routers import auth, drivers, locations, map, follow_ups, professional_profile, integrations, jobs
+from app.routers import auth, drivers, locations, map, follow_ups, professional_profile, integrations, jobs, reviews
 
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(drivers.router, prefix="/api/v1")
@@ -265,6 +265,7 @@ app.include_router(follow_ups.router, prefix="/api/v1")
 app.include_router(professional_profile.router, prefix="/api/v1")
 app.include_router(integrations.router, prefix="/api/v1")
 app.include_router(jobs.router, prefix="/api/v1")
+app.include_router(reviews.router, prefix="/api/v1")
 
 
 # Run with: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
