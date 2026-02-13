@@ -116,4 +116,19 @@ def check_badges(profile: dict, existing_badges: list = None) -> list:
     if profile.get("open_to_work") and "open_to_work" not in badge_ids:
         new_badges.append({"id": "open_to_work", "name": "Open to Work", "awarded_at": None})
 
+    # Verification badges (from role_details)
+    role_details = profile.get("role_details", {})
+    if isinstance(role_details, str):
+        import json
+        try:
+            role_details = json.loads(role_details)
+        except (json.JSONDecodeError, TypeError):
+            role_details = {}
+
+    if role_details.get("fmcsa_verified") and "fmcsa_verified" not in badge_ids:
+        new_badges.append({"id": "fmcsa_verified", "name": "FMCSA Verified", "awarded_at": None})
+
+    if role_details.get("google_verified") and "google_verified" not in badge_ids:
+        new_badges.append({"id": "google_verified", "name": "Google Verified", "awarded_at": None})
+
     return new_badges

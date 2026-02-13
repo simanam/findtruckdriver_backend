@@ -50,6 +50,10 @@ def _build_full_response(profile: dict) -> dict:
     wh = result.get("work_history", [])
     if isinstance(wh, str):
         result["work_history"] = json.loads(wh)
+    # Ensure role_details is a dict
+    rd = result.get("role_details", {})
+    if isinstance(rd, str):
+        result["role_details"] = json.loads(rd)
     return result
 
 
@@ -134,6 +138,10 @@ async def create_professional_profile(
                 entry.model_dump() if hasattr(entry, 'model_dump') else entry
                 for entry in profile_dict["work_history"]
             ])
+
+        # Serialize role_details for JSONB storage
+        if "role_details" in profile_dict and profile_dict["role_details"] is not None:
+            profile_dict["role_details"] = json.dumps(profile_dict["role_details"])
 
         # Calculate completion percentage
         profile_dict["completion_percentage"] = calculate_completion(profile_dict)
@@ -251,6 +259,16 @@ async def update_my_professional_profile(
                 entry.model_dump() if hasattr(entry, 'model_dump') else entry
                 for entry in update_dict["work_history"]
             ])
+
+        # Serialize role_details for JSONB storage
+        if "role_details" in update_dict and update_dict["role_details"] is not None:
+            # Merge with existing role_details
+            existing_rd = current_profile.get("role_details", {})
+            if isinstance(existing_rd, str):
+                existing_rd = json.loads(existing_rd)
+            merged_rd = {**(existing_rd or {}), **update_dict["role_details"]}
+            update_dict["role_details"] = json.dumps(merged_rd)
+            merged_profile["role_details"] = merged_rd
 
         # Recalculate completion percentage
         update_dict["completion_percentage"] = calculate_completion(merged_profile)

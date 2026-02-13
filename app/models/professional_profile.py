@@ -22,6 +22,8 @@ VALID_PREFERRED_HAUL = ["long_haul", "regional", "local"]
 class WorkHistoryEntry(BaseModel):
     """A single work history entry"""
     company_name: str = Field(..., min_length=1, max_length=200)
+    dot_number: Optional[str] = Field(None, max_length=20)
+    mc_number: Optional[str] = Field(None, max_length=20)
     role: Optional[str] = Field(None, max_length=100)
     start_date: str = Field(..., description="Start date in YYYY-MM format")
     end_date: Optional[str] = Field(None, description="End date in YYYY-MM format, null if current")
@@ -52,6 +54,7 @@ class ProfessionalProfileCreate(BaseModel):
     company_name: Optional[str] = Field(None, max_length=100, description="Current company name")
     mc_number: Optional[str] = Field(None, max_length=20, description="MC number")
     dot_number: Optional[str] = Field(None, max_length=20, description="DOT number")
+    company_start_date: Optional[str] = Field(None, description="Start date at current company in YYYY-MM format")
     bio: Optional[str] = Field(None, max_length=1000, description="Short bio")
     specialties: Optional[List[str]] = Field(None, description="Driving specialties")
 
@@ -66,6 +69,7 @@ class ProfessionalProfileCreate(BaseModel):
     preferred_haul: Optional[List[str]] = Field(None, description="Preferred haul types")
 
     work_history: Optional[List[WorkHistoryEntry]] = Field(None, description="Past work experience")
+    role_details: Optional[dict] = Field(None, description="Role-specific data (FMCSA, Google verification, specialties)")
 
     @validator("haul_type")
     def validate_haul_type(cls, v):
@@ -123,6 +127,7 @@ class ProfessionalProfileUpdate(BaseModel):
     company_name: Optional[str] = Field(None, max_length=100)
     mc_number: Optional[str] = Field(None, max_length=20)
     dot_number: Optional[str] = Field(None, max_length=20)
+    company_start_date: Optional[str] = None
     bio: Optional[str] = Field(None, max_length=1000)
     specialties: Optional[List[str]] = None
 
@@ -137,6 +142,7 @@ class ProfessionalProfileUpdate(BaseModel):
     preferred_haul: Optional[List[str]] = None
 
     work_history: Optional[List[WorkHistoryEntry]] = None
+    role_details: Optional[dict] = None
 
     @validator("haul_type")
     def validate_haul_type(cls, v):
@@ -197,6 +203,7 @@ class ProfessionalProfileResponse(BaseModel):
     company_name: Optional[str] = None
     mc_number: Optional[str] = None
     dot_number: Optional[str] = None
+    company_start_date: Optional[str] = None
     bio: Optional[str] = None
     specialties: Optional[List[str]] = None
 
@@ -214,6 +221,7 @@ class ProfessionalProfileResponse(BaseModel):
     preferred_haul: Optional[List[str]] = None
 
     work_history: Optional[List[WorkHistoryEntry]] = []
+    role_details: Optional[dict] = None
 
     badges: Optional[List[Any]] = []
     completion_percentage: int = 0
