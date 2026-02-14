@@ -21,6 +21,7 @@ from app.models.location import (
 )
 from app.services.follow_up_engine import determine_follow_up
 from app.services.facility_discovery import find_nearby_facility
+from app.services.detention_monitor import check_auto_checkout
 from app.dependencies import get_current_driver
 from app.utils.location import fuzz_location, calculate_distance
 from app.config import settings
@@ -128,21 +129,29 @@ async def check_in(
                         facility_name = facility["name"]
                         break
 
+        # Check for auto-checkout detection (driver left facility without checking out)
+        auto_checkout_alert = await check_auto_checkout(
+            db, driver["id"], request.latitude, request.longitude
+        )
+
         logger.info(f"Driver {driver['id']} checked in at ({fuzzed_lat}, {fuzzed_lng})")
 
-        return CheckInResponse(
-            success=True,
-            status=current_status,
-            location=LocationResponse(
-                latitude=fuzzed_lat,
-                longitude=fuzzed_lng,
-                facility_name=facility_name,
-                updated_at=datetime.utcnow()
-            ),
-            message=f"You're on the map! {current_status.title()}" + (
+        response = {
+            "success": True,
+            "status": current_status,
+            "location": {
+                "latitude": request.latitude,
+                "longitude": request.longitude,
+                "facility_name": facility_name,
+                "updated_at": datetime.utcnow().isoformat()
+            },
+            "message": f"You're on the map! {current_status.title()}" + (
                 f" at {facility_name}" if facility_name else ""
-            )
-        )
+            ),
+            "auto_checkout_alert": auto_checkout_alert
+        }
+
+        return response
 
     except Exception as e:
         logger.error(f"Check-in failed: {e}")
@@ -565,8 +574,9 @@ async def get_my_location(
     db: Client = Depends(get_db_admin)
 ):
     """
-    Get my current location (fuzzed) with driver info.
-    Use this to show "YOU" marker on the map.
+    Get my current exact location with driver info.
+    Returns real coordinates (not fuzzed) since this is the user's own data.
+    Exact location is needed for detention check-in proximity validation.
     """
     try:
         location = db.from_("driver_locations") \
@@ -581,6 +591,10 @@ async def get_my_location(
                 detail="No location data found. Please check in first."
             )
 
+        # Use real coordinates (not fuzzed) for the user's own marker
+        real_lat = location.data["latitude"]
+        real_lng = location.data["longitude"]
+
         # Try to find nearby facility
         facility_name = None
         try:
@@ -588,8 +602,8 @@ async def get_my_location(
             if facilities.data:
                 for facility in facilities.data:
                     distance = calculate_distance(
-                        location.data["fuzzed_latitude"],
-                        location.data["fuzzed_longitude"],
+                        real_lat,
+                        real_lng,
                         facility["latitude"],
                         facility["longitude"]
                     )
@@ -603,8 +617,8 @@ async def get_my_location(
             driver_id=driver["id"],
             handle=driver["handle"],
             status=driver["status"],
-            latitude=location.data["fuzzed_latitude"],
-            longitude=location.data["fuzzed_longitude"],
+            latitude=real_lat,
+            longitude=real_lng,
             facility_name=facility_name,
             updated_at=location.data["recorded_at"]
         )
